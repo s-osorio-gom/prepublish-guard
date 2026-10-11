@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         res = full_scan(root, config, history=args.history, include_untracked=args.include_untracked,
                         max_commits=args.max_commits)
         target = args.config or root / CONFIG_NAME
-        added = write_ignore(target, [f.fingerprint for f in res.findings + res.covered])
+        added = write_ignore(target, [f.fingerprint for f in res.findings])
         print(f"{added} finding(s) accepted in {target} (fingerprints only; review them before committing)")
         return 0
     res = full_scan(root, config, history=args.history, include_untracked=args.include_untracked,

@@ -87,8 +87,8 @@ prepublish-guard 0.1.1: 7 finding(s) [high 5, medium 1, low 1] in 3 file(s) and 
   what to do: Revoke or rotate it at the provider first: once pushed, deleting it from the code does not make it safe. ...
 
 == personal data (3)
-  [HIGH  ] HISTORY clientes.csv (first added in 68dd34f53d)  pii_column: column `cedula` holds 2 personal value(s)  -> cedula  #7dd103c6b5aa3238
-  [HIGH  ] HISTORY clientes.csv (first added in 68dd34f53d)  pii_column: column `celular` holds 2 personal value(s)  -> celular  #f6c465cb7d2e62e6
+  [HIGH  ] HISTORY clientes.csv (first added in 68dd34f53d)  pii_column: column `cedula` holds 2 personal value(s)  -> cedula  #6ac615806a97875e
+  [HIGH  ] HISTORY clientes.csv (first added in 68dd34f53d)  pii_column: column `celular` holds 2 personal value(s)  -> celular  #1383a8e8cec79266
   [MEDIUM] HISTORY README.md:3 (first added in 68dd34f53d)  email_address: personal e-mail address  -> [hidden, 28 chars]  #e42afd2dffdbc515
   what to do: Remove it or replace it with fictional data. ...
 
@@ -144,7 +144,8 @@ fail_on = "medium"                                     # low | medium | high | n
 ```
 
 `prepublish-guard baseline . --history` accepts the current findings. It writes only their fingerprints to `ignore`,
-never the values. After that, only new findings fail the check.
+never the values. After that, only new findings fail the check. Accepting a CSV column finding accepts the values the
+column holds now: a new value in that column reports the column again.
 
 ## How well it works
 

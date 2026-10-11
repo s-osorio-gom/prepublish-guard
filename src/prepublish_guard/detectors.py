@@ -26,6 +26,7 @@ class Hit:
     value: str
     message: str
     covers: frozenset[str] = frozenset()   # pii_column: hashes of the values the per-line rules find in it
+    content: str = ""                      # pii_column: hash of its personal cells, so accepting it is per content
 
 
 # ------------------------------------------------------------------------------------------------ helpers
@@ -332,15 +333,16 @@ def _csv_columns(path: str, text: str, allowed_email_domains: set[str]) -> list[
             covers = {value_hash(h.value) for v in values
                       for h in _personal_line(v, path, allowed_email_domains)}
             hits.append(Hit("pii_column", "personal_data", "high", rows[0][i],
-                            f"column `{rows[0][i].strip()}` holds {len(real)} personal value(s)", frozenset(covers)))
+                            f"column `{rows[0][i].strip()}` holds {len(real)} personal value(s)", frozenset(covers),
+                            value_hash("\n".join(sorted({v.strip() for v in real})))))
     return hits
 
 
 def _personal_cell(value: str, allowed_email_domains: set[str]) -> bool:
-    """A cell counts as personal when it holds an ID or phone-length number, or an e-mail address that the per-line
-    rule would also report (example, test and noreply domains and `allowed_email_domains` do not count)."""
-    if any(not _safe_email(m.group("local"), m.group("domain"))
-           and m.group("domain").lower() not in allowed_email_domains for m in _EMAIL.finditer(value)):
+    """A cell counts as personal when the per-line rules report something in it (so example, test and noreply
+    domains, `allowed_email_domains` and URL user names do not count), or when it holds an ID or phone-length
+    number besides any e-mail address."""
+    if next(_personal_line(value, "", allowed_email_domains), None) is not None:
         return True
     return len(re.sub(r"\D", "", _EMAIL.sub("", value))) >= 7
 
@@ -358,6 +360,8 @@ def to_finding(hit: Hit, path: str, line: int) -> Finding:
                       preview=preview, message=hit.message, value_sha256=value_hash(hit.value))
     if hit.covers:
         finding.extra["_covers"] = set(hit.covers)           # internal, removed before any report
+    if hit.content:
+        finding.basis = value_hash(f"{hit.value}\0{hit.content}")   # accepting a column accepts its current values
     return finding
 
 

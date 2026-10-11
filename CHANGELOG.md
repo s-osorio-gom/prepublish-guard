@@ -5,10 +5,12 @@
 Fixes found by using 0.1.0 on a real repository (each has a test in `tests/test_0_1_1.py`):
 - A CSV/TSV column of e-mails is personal data only when its addresses would be reported one by one: example,
   test and noreply domains and `allowed_email_domains` no longer make an `email` column a high finding.
-- Column coverage is per column: a table's column finding hides only the values of that column, an accepted
-  column (`ignore`) hides nothing, and `baseline` records the column's current values with it, so the next scan
-  stays quiet while new values in an accepted column are reported. A number next to an example e-mail in the same
-  cell still counts.
+- An accepted CSV column (`ignore`/`baseline`) no longer hides new values: a column's fingerprint now covers the
+  personal values it holds, so any new value (an e-mail or a bare ID) reports the column again, while an unchanged
+  table stays quiet. In the working tree a column hides only its own values; a value in another column of the same
+  table is still reported. A number next to an example e-mail in the same cell still counts, and a URL user name
+  (`https://user@host`) is not an e-mail.
+- Note: column fingerprints changed, so a 0.1.0 baseline that accepted a CSV column must be taken again.
 - The Action passes its inputs to the script through environment variables, skips the SARIF upload when the
   scan step did not produce a file, and uses `actions/setup-python@v6` and `codeql-action/upload-sarif@v4`
   (Node 24). Examples use `actions/checkout@v5`.
