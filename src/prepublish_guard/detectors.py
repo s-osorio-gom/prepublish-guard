@@ -26,7 +26,8 @@ class Hit:
     value: str
     message: str
     covers: frozenset[str] = frozenset()   # pii_column: hashes of the values the per-line rules find in it
-    content: str = ""                      # pii_column: hash of its personal cells, so accepting it is per content
+    cells: frozenset[str] = frozenset()    # pii_column: hashes of its personal cells (accepting it is per content)
+    column: int = -1                       # pii_column: position, so two columns with the same name stay apart
 
 
 # ------------------------------------------------------------------------------------------------ helpers
@@ -334,7 +335,7 @@ def _csv_columns(path: str, text: str, allowed_email_domains: set[str]) -> list[
                       for h in _personal_line(v, path, allowed_email_domains)}
             hits.append(Hit("pii_column", "personal_data", "high", rows[0][i],
                             f"column `{rows[0][i].strip()}` holds {len(real)} personal value(s)", frozenset(covers),
-                            value_hash("\n".join(sorted({v.strip() for v in real})))))
+                            frozenset(value_hash(v.strip()) for v in real), i))
     return hits
 
 
@@ -356,12 +357,13 @@ def to_finding(hit: Hit, path: str, line: int) -> Finding:
         preview = hidden(hit.value)                          # a few characters + length can be enough to guess it
     else:
         preview = mask(hit.value)
+    identity = f"{hit.value}\0{hit.column}" if hit.rule == "pii_column" else hit.value
     finding = Finding(rule=hit.rule, category=hit.category, severity=hit.severity, path=path, line=line,
-                      preview=preview, message=hit.message, value_sha256=value_hash(hit.value))
+                      preview=preview, message=hit.message, value_sha256=value_hash(identity))
     if hit.covers:
         finding.extra["_covers"] = set(hit.covers)           # internal, removed before any report
-    if hit.content:
-        finding.basis = value_hash(f"{hit.value}\0{hit.content}")   # accepting a column accepts its current values
+    if hit.cells:
+        finding.extra["_cells"] = set(hit.cells)             # sealed into the fingerprint by scanner.full_scan
     return finding
 
 

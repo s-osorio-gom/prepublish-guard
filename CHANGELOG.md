@@ -6,9 +6,13 @@ Fixes found by using 0.1.0 on a real repository (each has a test in `tests/test_
 - A CSV/TSV column of e-mails is personal data only when its addresses would be reported one by one: example,
   test and noreply domains and `allowed_email_domains` no longer make an `email` column a high finding.
 - An accepted CSV column (`ignore`/`baseline`) no longer hides new values: a column's fingerprint now covers the
-  personal values it holds, so any new value (an e-mail or a bare ID) reports the column again, while an unchanged
-  table stays quiet. In the working tree a column hides only its own values; a value in another column of the same
-  table is still reported. A number next to an example e-mail in the same cell still counts, and a URL user name
+  personal values it holds (in history, across every commit that touched the table), so any new value, an e-mail
+  or a bare ID, reports the column again, while an unchanged table stays quiet. Removing values also changes it:
+  take the baseline again after cleaning a table. Columns with the same name are tracked separately.
+- New finding `pii_history_rows` (high): personal values a table held in an earlier commit and no longer holds,
+  one finding per table, so a row added and later removed is not lost in the history scan.
+- In the working tree a column hides only its own values; a value in another column of the same table is still
+  reported. A number next to an example e-mail in the same cell still counts, and a URL user name
   (`https://user@host`) is not an e-mail.
 - Note: column fingerprints changed, so a 0.1.0 baseline that accepted a CSV column must be taken again.
 - The Action passes its inputs to the script through environment variables, skips the SARIF upload when the

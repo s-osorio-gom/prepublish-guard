@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 
 from .config import CONFIG_NAME, Config
 from .detectors import scan_file_level, scan_line, term_pattern, to_finding
-from .findings import Finding
+from .findings import Finding, value_hash
 
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache",
              ".tox", "dist", "build", ".idea", ".vscode"}
@@ -32,6 +32,9 @@ class ScanResult:
     findings: list[Finding] = field(default_factory=list)
     suppressed: int = 0
     notes: list[str] = field(default_factory=list)
+    covered: list[Finding] = field(default_factory=list)       # internal: values hidden by their table's column
+    covers: dict[str, set[str]] = field(default_factory=dict)  # internal: hashes each table's columns cover
+    partial: set[str] = field(default_factory=set)             # internal: files scanned only up to max_file_bytes
 
 
 _ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
@@ -102,20 +105,43 @@ def _read_text(path: Path, max_bytes: int) -> tuple[str | None, bool]:
     return data[:max_bytes].decode("utf-8", errors="replace"), truncated
 
 
-def _drop_covered(findings: list[Finding], per_column: bool = True) -> list[Finding]:
+def _drop_covered(findings: list[Finding], per_column: bool = True
+                  ) -> tuple[list[Finding], list[Finding], dict[str, set[str]]]:
     """In a table already reported for its personal columns, one finding per column is the useful report: the
     per-line values of those columns (thousands of e-mails in a CSV) add nothing but noise. In the working tree the
     coverage is per column, so a value outside the personal columns is still reported. In history, rows added by
-    later commits arrive without their header, so the whole table is covered. A column's fingerprint includes its
-    personal values: accepting it (`ignore`, `baseline`) accepts those, and any new value reports the column again."""
+    later commits arrive without their header, so the whole table is covered; `full_scan` then reports a covered
+    value that the current table no longer holds, or folds it into the fingerprint of a deleted table.
+    Returns (kept, covered, covers per path)."""
     covers: dict[str, set[str]] = {}
     for f in findings:
         values = f.extra.pop("_covers", set())
         if f.rule == "pii_column":
             covers.setdefault(f.path, set()).update(values)
-    return [f for f in findings
-            if not (f.category == "personal_data" and f.rule != "pii_column" and f.path in covers
-                    and (not per_column or f.value_sha256 in covers[f.path]))]
+    kept, covered = [], []
+    for f in findings:
+        hidden = (f.category == "personal_data" and f.rule != "pii_column" and f.path in covers
+                  and (not per_column or f.value_sha256 in covers[f.path]))
+        (covered if hidden else kept).append(f)
+    return kept, covered, covers
+
+
+def _history_rows(path: str, values: set[str]) -> Finding:
+    """One finding per table for personal values it held in some commit and no longer holds."""
+    return Finding(rule="pii_history_rows", category="personal_data", severity="high", path=path, line=0,
+                   preview=f"{len(values)} value(s)", in_working_tree=False, value_sha256=value_hash(path),
+                   basis=value_hash("\n".join(sorted(values))),
+                   message="personal values this table no longer holds are still in its git history")
+
+
+def _seal(findings: list[Finding], folded: dict[str, set[str]]) -> None:
+    """A column's fingerprint covers the personal values it holds: accepting it (`ignore`, `baseline`) accepts
+    those, and any new value reports the column again. Removing values also changes it (take the baseline again)."""
+    for f in findings:
+        cells = f.extra.pop("_cells", set())
+        if f.rule == "pii_column":
+            cells |= folded.get(f.path, set())
+            f.basis = value_hash(f.value_sha256 + "\0" + "\n".join(sorted(cells)))
 
 
 class Scanner:
@@ -147,6 +173,7 @@ class Scanner:
             text, truncated = (None, False) if Path(rel).suffix.lower() in BINARY_SUFFIXES else \
                 _read_text(self.root / rel, self.config.max_file_bytes)
             if truncated:
+                res.partial.add(rel)
                 res.notes.append(f"{rel}: larger than max_file_bytes ({self.config.max_file_bytes}); only its first "
                                  "part was scanned")
             if text is None:                              # binary: only its name can be checked
@@ -163,7 +190,8 @@ class Scanner:
             res.findings.append(Finding(rule="missing_license", category="hygiene", severity="low", path="LICENSE",
                                         line=0, preview="-", message="no license file at the root: others may not "
                                         "legally reuse the code", value_sha256="0" * 64))
-        res.findings = _dedupe(_drop_covered(res.findings))
+        kept, res.covered, res.covers = _drop_covered(res.findings)
+        res.findings = _dedupe(kept)
         return res
 
     def scan_history(self, max_commits: int | None = None) -> ScanResult:
@@ -233,7 +261,7 @@ class Scanner:
         proc.wait()
         for f in first.values():
             f.extra.pop("_commits", None)
-        res.findings = _drop_covered(list(first.values()), per_column=False)
+        res.findings, res.covered, res.covers = _drop_covered(list(first.values()), per_column=False)
         return res
 
     @staticmethod
@@ -244,6 +272,9 @@ class Scanner:
             f.commit, f.in_working_tree = commit, False
             f.extra["_commits"] = set()
             seen[key] = f
+        elif f.rule == "pii_column":                         # the table again in a later commit: all its values
+            for k in ("_cells", "_covers"):
+                seen[key].extra.setdefault(k, set()).update(f.extra.get(k, set()))
         seen[key].extra["_commits"].add(commit)
         seen[key].commits = len(seen[key].extra["_commits"])
 
@@ -279,6 +310,17 @@ def full_scan(root: Path, config: Config, history: bool = False, include_untrack
                         g.commit, g.commits = f.commit, f.commits
             else:
                 res.findings.append(f)                       # only in history: needs history rewrite + rotation
+        folded: dict[str, set[str]] = {}
+        gone: dict[str, set[str]] = {}
+        for f in hist.covered:
+            if f.path not in res.covers:                     # the table is gone: its values belong to its columns
+                folded.setdefault(f.path, set()).add(f.value_sha256)
+            elif f.path not in res.partial and f.value_sha256 not in res.covers[f.path] and f.key not in in_tree:
+                gone.setdefault(f.path, set()).add(f.value_sha256)   # once in the table, no longer: history only
+        res.findings += [_history_rows(path, values) for path, values in sorted(gone.items())]
+        _seal(res.findings, folded)
+    else:
+        _seal(res.findings, {})
     kept = [f for f in res.findings if f.fingerprint not in config.ignore]
     res.suppressed = len(res.findings) - len(kept)
     res.findings = sorted(kept, key=lambda f: (-("low", "medium", "high").index(f.severity), f.path, f.line))

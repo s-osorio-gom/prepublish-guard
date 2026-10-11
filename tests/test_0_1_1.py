@@ -93,3 +93,51 @@ def test_rows_added_in_later_commits_stay_under_their_column_in_history(tmp_path
     git(repo, "commit", "-qm", "rm", "--no-gpg-sign")
     rules = [f.rule for f in full_scan(repo, Config(), history=True).findings if f.path == "data/users.csv"]
     assert rules == ["pii_column"]
+
+
+# Third Codex review (7dec8c9), the last round under the stop rule.
+
+def _commit(repo, msg):
+    from test_scan_and_cli import git
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", msg, "--no-gpg-sign")
+
+
+def test_new_value_in_a_deleted_accepted_table_is_reported(tmp_path):
+    from prepublish_guard.cli import main
+    other = "luis.mora" + "@" + "gmail.com"
+    repo = new_repo(tmp_path, {"data/users.csv": f"id,email\n1,{PERSONAL}\n"})
+    (repo / "data/users.csv").unlink()
+    _commit(repo, "rm")
+    assert main(["baseline", str(repo), "--history"]) == 0
+    assert main(["scan", str(repo), "--history"]) == 0
+    (repo / "data/users.csv").write_text(f"id,email\n1,{PERSONAL}\n2,{other}\n")
+    _commit(repo, "again")
+    (repo / "data/users.csv").unlink()
+    _commit(repo, "rm again")
+    assert main(["scan", str(repo), "--history"]) == 1
+
+
+def test_value_added_then_removed_in_an_accepted_table_is_reported(tmp_path):
+    from prepublish_guard.cli import main
+    other = "luis.mora" + "@" + "gmail.com"
+    repo = new_repo(tmp_path, {"data/users.csv": f"id,email\n1,{PERSONAL}\n"})
+    assert main(["baseline", str(repo), "--history"]) == 0
+    _commit(repo, "baseline")
+    (repo / "data/users.csv").write_text(f"id,email\n1,{PERSONAL}\n2,{other}\n")
+    _commit(repo, "row")
+    (repo / "data/users.csv").write_text(f"id,email\n1,{PERSONAL}\n")
+    _commit(repo, "row removed")
+    assert main(["scan", str(repo)]) == 0                                      # the current table is unchanged
+    assert main(["scan", str(repo), "--history"]) == 1                         # the removed row is in history
+
+
+def test_columns_with_the_same_name_are_tracked_separately(tmp_path):
+    other = "luis.mora" + "@" + "gmail.com"
+    table = f"id,email,email\n1,{PERSONAL},{COMPANY}\n"
+    repo = new_repo(tmp_path, {"data/users.csv": table})
+    cols = [f for f in full_scan(repo, Config()).findings if f.rule == "pii_column"]
+    assert len(cols) == 2
+    (repo / "data/users.csv").write_text(table + f"2,{PERSONAL},{other}\n")
+    res = full_scan(repo, Config(ignore={f.fingerprint for f in cols}))
+    assert [f.rule for f in res.findings] == ["pii_column"]

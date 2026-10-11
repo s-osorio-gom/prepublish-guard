@@ -87,8 +87,8 @@ prepublish-guard 0.1.1: 7 finding(s) [high 5, medium 1, low 1] in 3 file(s) and 
   what to do: Revoke or rotate it at the provider first: once pushed, deleting it from the code does not make it safe. ...
 
 == personal data (3)
-  [HIGH  ] HISTORY clientes.csv (first added in 68dd34f53d)  pii_column: column `cedula` holds 2 personal value(s)  -> cedula  #6ac615806a97875e
-  [HIGH  ] HISTORY clientes.csv (first added in 68dd34f53d)  pii_column: column `celular` holds 2 personal value(s)  -> celular  #1383a8e8cec79266
+  [HIGH  ] HISTORY clientes.csv (first added in 68dd34f53d)  pii_column: column `cedula` holds 2 personal value(s)  -> cedula  #2a32f4428b31a0ff
+  [HIGH  ] HISTORY clientes.csv (first added in 68dd34f53d)  pii_column: column `celular` holds 2 personal value(s)  -> celular  #71d34175afada5ed
   [MEDIUM] HISTORY README.md:3 (first added in 68dd34f53d)  email_address: personal e-mail address  -> [hidden, 28 chars]  #e42afd2dffdbc515
   what to do: Remove it or replace it with fictional data. ...
 
@@ -184,7 +184,8 @@ which the author then cleaned from the files and the history:
 - A shallow clone has an incomplete history. The report says so; in CI use `actions/checkout` with
   `fetch-depth: 0`.
 - In a table already reported for its personal columns (`pii_column`), the individual values of those columns are
-  not listed one by one.
+  not listed one by one. Accepting a column accepts the values it holds now; removing values from it also changes
+  its fingerprint, so take the baseline again after cleaning a table.
 - On very large histories, `--max-commits N` limits the scan to the newest commits.
 - E-mails in datasets you publish on purpose need `allowed_email_domains`, `allow_paths` or a `baseline`.
 

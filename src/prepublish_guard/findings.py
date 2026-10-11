@@ -70,6 +70,7 @@ class Finding:
     def as_dict(self) -> dict:
         d = asdict(self)
         del d["value_sha256"], d["basis"]
+        d["extra"] = {k: v for k, v in d["extra"].items() if not k.startswith("_")}   # internal bookkeeping
         d["fingerprint"] = self.fingerprint
         return d
 
