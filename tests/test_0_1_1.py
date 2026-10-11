@@ -40,3 +40,27 @@ def test_accepted_column_finding_does_not_hide_new_personal_values(tmp_path):
     assert not [f for f in first.findings if f.rule == "email_address"]       # covered by the column finding
     accepted = full_scan(repo, Config(ignore={column[0].fingerprint}), history=True)
     assert {f.rule for f in accepted.findings} == {"email_address"}
+
+
+# Review of the 0.1.1 pull request (Codex): each case failed on the first version of the fix.
+
+def test_baseline_of_a_table_stays_quiet_on_the_next_scan(tmp_path):
+    from prepublish_guard.cli import main
+    repo = new_repo(tmp_path, {"data/users.csv": f"id,email\n1,{PERSONAL}\n"})
+    assert main(["baseline", str(repo), "--history"]) == 0
+    assert main(["scan", str(repo), "--history"]) == 0
+
+
+def test_accepted_column_is_uncovered_even_when_another_column_is_open(tmp_path):
+    other = "luis.mora" + "@" + "gmail.com"
+    table = f"id,email,celular\n1,{PERSONAL},31" + "24567890\n"
+    repo = new_repo(tmp_path, {"data/users.csv": table})
+    email_col = [f for f in full_scan(repo, Config()).findings if f.rule == "pii_column" and f.preview == "email"]
+    (repo / "data/users.csv").write_text(table + f"2,{other},31" + "59871234\n")
+    res = full_scan(repo, Config(ignore={email_col[0].fingerprint}))
+    assert {f.preview for f in res.findings if f.rule == "pii_column"} == {"celular"}
+    assert len([f for f in res.findings if f.rule == "email_address"]) == 2     # both values of the accepted column
+
+
+def test_number_next_to_a_safe_e_mail_still_counts():
+    assert columns("id,documento\n1,10" + "23456781 ana@example.com\n") == ["documento"]

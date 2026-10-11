@@ -32,6 +32,7 @@ class ScanResult:
     findings: list[Finding] = field(default_factory=list)
     suppressed: int = 0
     notes: list[str] = field(default_factory=list)
+    covered: list[Finding] = field(default_factory=list)   # values reported through their table's column finding
 
 
 _ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
@@ -102,12 +103,22 @@ def _read_text(path: Path, max_bytes: int) -> tuple[str | None, bool]:
     return data[:max_bytes].decode("utf-8", errors="replace"), truncated
 
 
-def _drop_covered(findings: list[Finding], ignore: set[str]) -> list[Finding]:
+def _drop_covered(findings: list[Finding], ignore: set[str]) -> tuple[list[Finding], list[Finding]]:
     """In a table already reported for its personal columns, one finding per column is the useful report: the
-    per-line personal values of that same file (thousands of e-mails in a CSV) add nothing but noise. A column
-    finding the owner accepted (`ignore`) covers nothing, so new personal values in that table are still reported."""
-    tables = {f.path for f in findings if f.rule == "pii_column" and f.fingerprint not in ignore}
-    return [f for f in findings if not (f.path in tables and f.category == "personal_data" and f.rule != "pii_column")]
+    per-line values of those columns (thousands of e-mails in a CSV) add nothing but noise. Coverage is per column:
+    a column the owner accepted (`ignore`) covers nothing, so its values are checked one by one (`baseline` accepts
+    them together with the column). Returns (kept, covered); `covered` lets `baseline` record them too."""
+    covers: dict[str, set[str]] = {}
+    for f in findings:
+        values = f.extra.pop("_covers", set())
+        if f.rule == "pii_column" and f.fingerprint not in ignore:
+            covers.setdefault(f.path, set()).update(values)
+    kept, covered = [], []
+    for f in findings:
+        hidden_by = covers.get(f.path, set())
+        is_covered = f.category == "personal_data" and f.rule != "pii_column" and f.value_sha256 in hidden_by
+        (covered if is_covered else kept).append(f)
+    return kept, covered
 
 
 class Scanner:
@@ -155,7 +166,8 @@ class Scanner:
             res.findings.append(Finding(rule="missing_license", category="hygiene", severity="low", path="LICENSE",
                                         line=0, preview="-", message="no license file at the root: others may not "
                                         "legally reuse the code", value_sha256="0" * 64))
-        res.findings = _dedupe(_drop_covered(res.findings, self.config.ignore))
+        kept, res.covered = _drop_covered(res.findings, self.config.ignore)
+        res.findings = _dedupe(kept)
         return res
 
     def scan_history(self, max_commits: int | None = None) -> ScanResult:
@@ -225,7 +237,7 @@ class Scanner:
         proc.wait()
         for f in first.values():
             f.extra.pop("_commits", None)
-        res.findings = _drop_covered(list(first.values()), self.config.ignore)
+        res.findings, res.covered = _drop_covered(list(first.values()), self.config.ignore)
         return res
 
     @staticmethod
@@ -263,6 +275,7 @@ def full_scan(root: Path, config: Config, history: bool = False, include_untrack
         hist = scanner.scan_history(max_commits)
         res.commits_scanned = hist.commits_scanned
         res.notes += hist.notes
+        res.covered += hist.covered
         in_tree = {f.key for f in res.findings}
         for f in hist.findings:
             if f.key in in_tree:                             # still present: annotate the working-tree finding

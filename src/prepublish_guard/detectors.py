@@ -25,6 +25,7 @@ class Hit:
     severity: str
     value: str
     message: str
+    covers: frozenset[str] = frozenset()   # pii_column: hashes of the values the per-line rules find in it
 
 
 # ------------------------------------------------------------------------------------------------ helpers
@@ -328,19 +329,20 @@ def _csv_columns(path: str, text: str, allowed_email_domains: set[str]) -> list[
         values = [r[i] for r in rows[1:] if i < len(r) and r[i].strip()]
         real = [v for v in values if _personal_cell(v, allowed_email_domains)]
         if real:
+            covers = {value_hash(h.value) for v in values
+                      for h in _personal_line(v, path, allowed_email_domains)}
             hits.append(Hit("pii_column", "personal_data", "high", rows[0][i],
-                            f"column `{rows[0][i].strip()}` holds {len(real)} personal value(s)"))
+                            f"column `{rows[0][i].strip()}` holds {len(real)} personal value(s)", frozenset(covers)))
     return hits
 
 
 def _personal_cell(value: str, allowed_email_domains: set[str]) -> bool:
     """A cell counts as personal when it holds an ID or phone-length number, or an e-mail address that the per-line
     rule would also report (example, test and noreply domains and `allowed_email_domains` do not count)."""
-    emails = list(_EMAIL.finditer(value))
-    if emails:
-        return any(not _safe_email(m.group("local"), m.group("domain"))
-                   and m.group("domain").lower() not in allowed_email_domains for m in emails)
-    return len(re.sub(r"\D", "", value)) >= 7
+    if any(not _safe_email(m.group("local"), m.group("domain"))
+           and m.group("domain").lower() not in allowed_email_domains for m in _EMAIL.finditer(value)):
+        return True
+    return len(re.sub(r"\D", "", _EMAIL.sub("", value))) >= 7
 
 
 def to_finding(hit: Hit, path: str, line: int) -> Finding:
@@ -352,8 +354,11 @@ def to_finding(hit: Hit, path: str, line: int) -> Finding:
         preview = hidden(hit.value)                          # a few characters + length can be enough to guess it
     else:
         preview = mask(hit.value)
-    return Finding(rule=hit.rule, category=hit.category, severity=hit.severity, path=path, line=line,
-                   preview=preview, message=hit.message, value_sha256=value_hash(hit.value))
+    finding = Finding(rule=hit.rule, category=hit.category, severity=hit.severity, path=path, line=line,
+                      preview=preview, message=hit.message, value_sha256=value_hash(hit.value))
+    if hit.covers:
+        finding.extra["_covers"] = set(hit.covers)           # internal, removed before any report
+    return finding
 
 
 LineScanner = Callable[[str, str], list[Hit]]

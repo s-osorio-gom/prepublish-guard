@@ -5,7 +5,10 @@
 Fixes found by using 0.1.0 on a real repository (each has a test in `tests/test_0_1_1.py`):
 - A CSV/TSV column of e-mails is personal data only when its addresses would be reported one by one: example,
   test and noreply domains and `allowed_email_domains` no longer make an `email` column a high finding.
-- Accepting a `pii_column` finding (`ignore`/`baseline`) no longer hides new personal values in that table.
+- Column coverage is per column: a table's column finding hides only the values of that column, an accepted
+  column (`ignore`) hides nothing, and `baseline` records the column's current values with it, so the next scan
+  stays quiet while new values in an accepted column are reported. A number next to an example e-mail in the same
+  cell still counts.
 - The Action passes its inputs to the script through environment variables, skips the SARIF upload when the
   scan step did not produce a file, and uses `actions/setup-python@v6` and `codeql-action/upload-sarif@v4`
   (Node 24). Examples use `actions/checkout@v5`.
