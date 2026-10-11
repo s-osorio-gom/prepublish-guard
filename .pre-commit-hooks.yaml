@@ -1,0 +1,7 @@
+- id: prepublish-guard
+  name: prepublish-guard (secrets and personal data)
+  description: Fails the commit when the repository's files (tracked and untracked, not ignored) contain secrets, personal data or other things that must not be published.
+  entry: prepublish-guard scan . --include-untracked
+  language: python
+  pass_filenames: false
+  always_run: true

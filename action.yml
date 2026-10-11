@@ -1,0 +1,33 @@
+name: prepublish-guard
+description: Find secrets and personal data in a repository's files and git history; upload SARIF to code scanning.
+branding: { icon: shield, color: green }
+inputs:
+  history:
+    description: "Also scan the full git history (needs actions/checkout with fetch-depth: 0)"
+    default: "true"
+  fail-on:
+    description: "low | medium | high | never (default: fail_on from .prepublish-guard.toml, else medium)"
+    default: ""
+  upload-sarif:
+    description: "Upload results to GitHub code scanning"
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with: { python-version: "3.12" }
+    - shell: bash
+      run: pip install "${{ github.action_path }}"
+    - id: scan
+      shell: bash
+      run: |
+        args=(scan "${{ github.workspace }}" --format sarif --output prepublish-guard.sarif --fail-on never)
+        [ "${{ inputs.history }}" = "true" ] && args+=(--history)
+        prepublish-guard "${args[@]}"
+        check=(scan "${{ github.workspace }}")
+        [ "${{ inputs.history }}" = "true" ] && check+=(--history)
+        [ -n "${{ inputs.fail-on }}" ] && check+=(--fail-on "${{ inputs.fail-on }}")
+        prepublish-guard "${check[@]}"
+    - if: always() && inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with: { sarif_file: prepublish-guard.sarif, category: prepublish-guard }

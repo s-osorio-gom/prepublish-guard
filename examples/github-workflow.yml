@@ -1,0 +1,16 @@
+# .github/workflows/prepublish-guard.yml in the repository you want to protect
+name: prepublish-guard
+on: [push, pull_request]
+permissions:
+  contents: read
+  security-events: write        # to show results under Security -> Code scanning
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }  # the full history, so deleted secrets are found too
+      - uses: s-osorio-gom/prepublish-guard@v0.1.0
+        with:
+          history: "true"
+          fail-on: medium

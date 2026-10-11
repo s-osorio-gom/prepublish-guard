@@ -1,0 +1,2 @@
+# The test suite and the demo contain fabricated secrets and personal data on purpose.
+allow_paths = ["tests/*", "examples/*"]

@@ -1,0 +1,231 @@
+{
+  "what": "prepublish-guard vs the lab's labelled review suites (24 cases; unsupported claims excluded). Not a held-out estimate: the suites were visible during development.",
+  "overall": {
+    "precision": 1.0,
+    "recall": 0.95,
+    "tp": 19,
+    "fp": 0,
+    "fn": 1
+  },
+  "per_issue": {
+    "secret": {
+      "tp": 4,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "pii": {
+      "tp": 5,
+      "fp": 0,
+      "fn": 1,
+      "precision": 1.0,
+      "recall": 0.833
+    },
+    "local_path": {
+      "tp": 4,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "confidential_term": {
+      "tp": 3,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "missing_license": {
+      "tp": 3,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    }
+  },
+  "per_split": {
+    "dev": {
+      "cases": 6,
+      "exact": 6
+    },
+    "validation": {
+      "cases": 10,
+      "exact": 9
+    },
+    "test": {
+      "cases": 8,
+      "exact": 8
+    }
+  },
+  "cases": [
+    {
+      "case": "review-dev-01",
+      "split": "dev",
+      "truth": [],
+      "predicted": [],
+      "match": true,
+      "rules": []
+    },
+    {
+      "case": "review-dev-02",
+      "split": "dev",
+      "truth": [
+        "secret"
+      ],
+      "predicted": [
+        "secret"
+      ],
+      "match": true,
+      "rules": [
+        "github_token"
+      ]
+    },
+    {
+      "case": "review-dev-03",
+      "split": "dev",
+      "truth": [
+        "pii"
+      ],
+      "predicted": [
+        "pii"
+      ],
+      "match": true,
+      "rules": [
+        "email_address"
+      ]
+    },
+    {
+      "case": "review-dev-04",
+      "split": "dev",
+      "truth": [
+        "missing_license",
+        "pii"
+      ],
+      "predicted": [
+        "missing_license",
+        "pii"
+      ],
+      "match": true,
+      "rules": [
+        "email_address",
+        "missing_license"
+      ]
+    },
+    {
+      "case": "review-dev-05",
+      "split": "dev",
+      "truth": [
+        "confidential_term",
+        "local_path"
+      ],
+      "predicted": [
+        "confidential_term",
+        "local_path"
+      ],
+      "match": true,
+      "rules": [
+        "confidential_term",
+        "personal_path"
+      ]
+    },
+    {
+      "case": "review-dev-06",
+      "split": "dev",
+      "truth": [],
+      "predicted": [],
+      "match": true,
+      "rules": []
+    },
+    {
+      "case": "review-val-01",
+      "split": "validation",
+      "match": true
+    },
+    {
+      "case": "review-val-02",
+      "split": "validation",
+      "match": true
+    },
+    {
+      "case": "review-val-03",
+      "split": "validation",
+      "match": true
+    },
+    {
+      "case": "review-val-04",
+      "split": "validation",
+      "match": false
+    },
+    {
+      "case": "review-val-05",
+      "split": "validation",
+      "match": true
+    },
+    {
+      "case": "review-val-06",
+      "split": "validation",
+      "match": true
+    },
+    {
+      "case": "review-val-07",
+      "split": "validation",
+      "match": true
+    },
+    {
+      "case": "review-val-08",
+      "split": "validation",
+      "match": true
+    },
+    {
+      "case": "review-val-09",
+      "split": "validation",
+      "match": true
+    },
+    {
+      "case": "review-val-10",
+      "split": "validation",
+      "match": true
+    },
+    {
+      "case": "review-test-01",
+      "split": "test",
+      "match": true
+    },
+    {
+      "case": "review-test-02",
+      "split": "test",
+      "match": true
+    },
+    {
+      "case": "review-test-03",
+      "split": "test",
+      "match": true
+    },
+    {
+      "case": "review-test-04",
+      "split": "test",
+      "match": true
+    },
+    {
+      "case": "review-test-05",
+      "split": "test",
+      "match": true
+    },
+    {
+      "case": "review-test-06",
+      "split": "test",
+      "match": true
+    },
+    {
+      "case": "review-test-07",
+      "split": "test",
+      "match": true
+    },
+    {
+      "case": "review-test-08",
+      "split": "test",
+      "match": true
+    }
+  ]
+}
