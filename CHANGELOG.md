@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1 (2026-10-11)
+
+Fixes found by using 0.1.0 on a real repository (each has a test in `tests/test_0_1_1.py`):
+- A CSV/TSV column of e-mails is personal data only when its addresses would be reported one by one: example,
+  test and noreply domains and `allowed_email_domains` no longer make an `email` column a high finding.
+- Accepting a `pii_column` finding (`ignore`/`baseline`) no longer hides new personal values in that table.
+- The Action passes its inputs to the script through environment variables, skips the SARIF upload when the
+  scan step did not produce a file, and uses `actions/setup-python@v6` and `codeql-action/upload-sarif@v4`
+  (Node 24). Examples use `actions/checkout@v5`.
+- CI now runs the Action (`uses: ./`) and the pre-commit hook exactly as users do.
+- The demo is deterministic (its README output no longer drifts) and the quick start pins a release.
+
 ## 0.1.0 (2026-10-11)
 
 First release.

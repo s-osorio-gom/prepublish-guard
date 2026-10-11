@@ -301,7 +301,7 @@ _PII_COLUMN = re.compile(r"(?i)^(?:c[ée]dula|cc|documento|numero_documento|n[u�
                          r"phone_number|celular|mobile|movil|m[oó]vil|email|e-mail|correo|correo_electr[oó]nico)$")
 
 
-def scan_file_level(path: str, text: str) -> list[Hit]:
+def scan_file_level(path: str, text: str, allowed_email_domains: set[str] | None = None) -> list[Hit]:
     hits: list[Hit] = []
     for m in _PEM.finditer(text):
         hits.append(Hit("private_key", "secret", "high", m.group(0)[:80], "private key block"))
@@ -311,11 +311,11 @@ def scan_file_level(path: str, text: str) -> list[Hit]:
             hits.append(Hit(rule, "sensitive_file", sev, path, f"{label} is tracked in the repository"))
             break
     if name.lower().endswith((".csv", ".tsv")):
-        hits += _csv_columns(path, text)
+        hits += _csv_columns(path, text, allowed_email_domains or set())
     return hits
 
 
-def _csv_columns(path: str, text: str) -> list[Hit]:
+def _csv_columns(path: str, text: str, allowed_email_domains: set[str]) -> list[Hit]:
     try:
         rows = list(csv.reader(io.StringIO(text[:2_000_000]), delimiter="\t" if path.lower().endswith(".tsv") else ","))
     except csv.Error:
@@ -326,11 +326,21 @@ def _csv_columns(path: str, text: str) -> list[Hit]:
     hits = []
     for i in cols:
         values = [r[i] for r in rows[1:] if i < len(r) and r[i].strip()]
-        real = [v for v in values if len(re.sub(r"\D", "", v)) >= 7 or "@" in v]
+        real = [v for v in values if _personal_cell(v, allowed_email_domains)]
         if real:
             hits.append(Hit("pii_column", "personal_data", "high", rows[0][i],
                             f"column `{rows[0][i].strip()}` holds {len(real)} personal value(s)"))
     return hits
+
+
+def _personal_cell(value: str, allowed_email_domains: set[str]) -> bool:
+    """A cell counts as personal when it holds an ID or phone-length number, or an e-mail address that the per-line
+    rule would also report (example, test and noreply domains and `allowed_email_domains` do not count)."""
+    emails = list(_EMAIL.finditer(value))
+    if emails:
+        return any(not _safe_email(m.group("local"), m.group("domain"))
+                   and m.group("domain").lower() not in allowed_email_domains for m in emails)
+    return len(re.sub(r"\D", "", value)) >= 7
 
 
 def to_finding(hit: Hit, path: str, line: int) -> Finding:

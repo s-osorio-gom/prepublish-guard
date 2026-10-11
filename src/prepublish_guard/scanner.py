@@ -102,10 +102,11 @@ def _read_text(path: Path, max_bytes: int) -> tuple[str | None, bool]:
     return data[:max_bytes].decode("utf-8", errors="replace"), truncated
 
 
-def _drop_covered(findings: list[Finding]) -> list[Finding]:
+def _drop_covered(findings: list[Finding], ignore: set[str]) -> list[Finding]:
     """In a table already reported for its personal columns, one finding per column is the useful report: the
-    per-line personal values of that same file (thousands of e-mails in a CSV) add nothing but noise."""
-    tables = {f.path for f in findings if f.rule == "pii_column"}
+    per-line personal values of that same file (thousands of e-mails in a CSV) add nothing but noise. A column
+    finding the owner accepted (`ignore`) covers nothing, so new personal values in that table are still reported."""
+    tables = {f.path for f in findings if f.rule == "pii_column" and f.fingerprint not in ignore}
     return [f for f in findings if not (f.path in tables and f.category == "personal_data" and f.rule != "pii_column")]
 
 
@@ -114,6 +115,7 @@ class Scanner:
         self.root = Path(root)
         self.config = config
         self.confidential = [term_pattern(t) for t in config.confidential_terms]
+        self._email_domains = set(config.allowed_email_domains)
 
     def _allowed_path(self, rel: str) -> bool:
         # The tool's own config lists the confidential terms and accepted fingerprints: never a finding.
@@ -143,7 +145,7 @@ class Scanner:
                 res.findings.extend(to_finding(hit, rel, 0) for hit in scan_file_level(rel, ""))
                 continue
             res.files_scanned += 1
-            for hit in scan_file_level(rel, text):
+            for hit in scan_file_level(rel, text, self._email_domains):
                 if not self._allowed_value(hit.value):
                     line = text[:text.find(hit.value)].count("\n") + 1 if hit.value in text else 0
                     res.findings.append(to_finding(hit, rel, line))
@@ -153,7 +155,7 @@ class Scanner:
             res.findings.append(Finding(rule="missing_license", category="hygiene", severity="low", path="LICENSE",
                                         line=0, preview="-", message="no license file at the root: others may not "
                                         "legally reuse the code", value_sha256="0" * 64))
-        res.findings = _dedupe(_drop_covered(res.findings))
+        res.findings = _dedupe(_drop_covered(res.findings, self.config.ignore))
         return res
 
     def scan_history(self, max_commits: int | None = None) -> ScanResult:
@@ -183,7 +185,7 @@ class Scanner:
 
         def flush() -> None:
             if path and added and not self._allowed_path(path):
-                for hit in scan_file_level(path, "\n".join(added) + "\n"):
+                for hit in scan_file_level(path, "\n".join(added) + "\n", self._email_domains):
                     if hit.category != "sensitive_file" and not self._allowed_value(hit.value):
                         self._remember(first, to_finding(hit, path, 0), commit)
             added.clear()
@@ -223,7 +225,7 @@ class Scanner:
         proc.wait()
         for f in first.values():
             f.extra.pop("_commits", None)
-        res.findings = _drop_covered(list(first.values()))
+        res.findings = _drop_covered(list(first.values()), self.config.ignore)
         return res
 
     @staticmethod

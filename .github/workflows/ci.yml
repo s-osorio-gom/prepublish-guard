@@ -9,9 +9,9 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { fetch-depth: 0 }
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "${{ matrix.python-version }}" }
       - run: pip install -e ".[dev]"
       - run: ruff check .
@@ -20,3 +20,26 @@ jobs:
         run: bash examples/demo.sh /tmp/pg-demo
       - name: Scan this repository with itself
         run: prepublish-guard scan . --history
+
+  action-and-hook:
+    # Runs the published entry points exactly as users do: the composite Action and the pre-commit hook.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - name: The Action on this repository
+        uses: ./
+        with: { history: "true", upload-sarif: "false" }
+      - name: The Action reports a leak (fabricated value, built at runtime)
+        run: |
+          set -u
+          mkdir -p /tmp/leak && cd /tmp/leak && git init -q -b main
+          printf 'TOKEN = "%s%s"\n' "ghp_" "T8mQ2vX6kR9pL4wZ7nB3cY1dF5hJ0sGaW2e4" > app.py
+          printf 'MIT License\n' > LICENSE
+          git add -A && git -c user.name=ci -c user.email=ci@example.com commit -qm leak
+          set +e; prepublish-guard scan /tmp/leak; code=$?; set -e
+          [ "$code" -eq 1 ]
+      - name: The pre-commit hook
+        run: |
+          pip install pre-commit
+          pre-commit try-repo . prepublish-guard --all-files

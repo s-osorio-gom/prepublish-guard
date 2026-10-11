@@ -13,8 +13,9 @@ git init -q -b main
 # Fabricated values, assembled at runtime so that this script itself does not look like a leak.
 TOKEN="ghp_""T8mQ2vX6kR9pL4wZ7nB3cY1dF5hJ0sGaW2e4"
 KEY="AKIA""R4TX9QW2ZP7LM3KD"
+PASSWORD="Sup3r-""4815x"
 cat > settings.py <<EOF
-DATABASE_URL = "postgres://app:Sup3r-${RANDOM}x@db.internal:5432/app"
+DATABASE_URL = "postgres://app:${PASSWORD}@db.internal:5432/app"
 GITHUB_TOKEN = "${TOKEN}"
 AWS_ACCESS_KEY_ID = "${KEY}"
 EOF
