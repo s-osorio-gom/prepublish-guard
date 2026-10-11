@@ -25,7 +25,7 @@ RULES = """secrets (high): AWS, GitHub, GitLab, Slack, Google, Stripe, OpenAI, A
   secret-looking names (password, token, api_key, client_secret...); JSON Web Tokens (medium)
 personal data: national ids with context (cedula, C.C., NIT, DNI, SSN, passport) and US SSN format (high); payment
   cards passing Luhn (high); personal e-mails (medium); Colombian mobile and other phone numbers (medium); CSV/TSV
-  columns of personal data (high)
+  columns of personal data (high); personal values a table held in an earlier commit and no longer holds (high)
 local paths (low): /Users/<name>/, /home/<name>/, C:\\Users\\<name>\\ with a personal user name
 confidential terms (medium): names listed in .prepublish-guard.toml
 sensitive files: SSH keys, credential files (high); .env, key stores, auth configs (medium); databases/backups (low)

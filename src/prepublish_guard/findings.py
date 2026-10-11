@@ -55,6 +55,7 @@ class Finding:
     commits: int = 0                   # how many commits added it (history scan)
     in_working_tree: bool = True       # False: only found in history
     extra: dict = field(default_factory=dict)
+    basis: str = ""                    # what the fingerprint identifies, when more than the value (never printed)
 
     @property
     def key(self) -> str:
@@ -64,11 +65,12 @@ class Finding:
     @property
     def fingerprint(self) -> str:
         """Public, stable across line moves and re-scans, and not reversible by guessing (see module doc)."""
-        return _public_fingerprint(self.rule, self.path, self.value_sha256)
+        return _public_fingerprint(self.rule, self.path, self.basis or self.value_sha256)
 
     def as_dict(self) -> dict:
         d = asdict(self)
-        del d["value_sha256"]
+        del d["value_sha256"], d["basis"]
+        d["extra"] = {k: v for k, v in d["extra"].items() if not k.startswith("_")}   # internal bookkeeping
         d["fingerprint"] = self.fingerprint
         return d
 

@@ -14,20 +14,25 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v6
       with: { python-version: "3.12" }
     - shell: bash
-      run: pip install "${{ github.action_path }}"
+      env: { ACTION_PATH: "${{ github.action_path }}" }
+      run: pip install "$ACTION_PATH"
     - id: scan
       shell: bash
+      env:                                   # inputs reach the script as data, never as shell code
+        WORKSPACE: ${{ github.workspace }}
+        HISTORY: ${{ inputs.history }}
+        FAIL_ON: ${{ inputs.fail-on }}
       run: |
-        args=(scan "${{ github.workspace }}" --format sarif --output prepublish-guard.sarif --fail-on never)
-        [ "${{ inputs.history }}" = "true" ] && args+=(--history)
+        args=(scan "$WORKSPACE" --format sarif --output prepublish-guard.sarif --fail-on never)
+        [ "$HISTORY" = "true" ] && args+=(--history)
         prepublish-guard "${args[@]}"
-        check=(scan "${{ github.workspace }}")
-        [ "${{ inputs.history }}" = "true" ] && check+=(--history)
-        [ -n "${{ inputs.fail-on }}" ] && check+=(--fail-on "${{ inputs.fail-on }}")
+        check=(scan "$WORKSPACE")
+        [ "$HISTORY" = "true" ] && check+=(--history)
+        [ -n "$FAIL_ON" ] && check+=(--fail-on "$FAIL_ON")
         prepublish-guard "${check[@]}"
-    - if: always() && inputs.upload-sarif == 'true'
-      uses: github/codeql-action/upload-sarif@v3
+    - if: always() && inputs.upload-sarif == 'true' && hashFiles('prepublish-guard.sarif') != ''
+      uses: github/codeql-action/upload-sarif@v4
       with: { sarif_file: prepublish-guard.sarif, category: prepublish-guard }

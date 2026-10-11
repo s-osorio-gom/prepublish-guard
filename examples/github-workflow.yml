@@ -8,9 +8,9 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { fetch-depth: 0 }  # the full history, so deleted secrets are found too
-      - uses: s-osorio-gom/prepublish-guard@v0.1.0
+      - uses: s-osorio-gom/prepublish-guard@v0.1.1
         with:
           history: "true"
           fail-on: medium

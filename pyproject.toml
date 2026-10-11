@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prepublish-guard"
-version = "0.1.0"
+version = "0.1.1"
 description = "Find secrets, personal data (incl. Colombian formats) and other things that must not be published, in a repository's files and its git history."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -52,7 +52,7 @@ home folders (`/home/user`, `/home/runner`) and its own config file.
 ## Quick start
 
 ```bash
-pip install git+https://github.com/s-osorio-gom/prepublish-guard   # or: pipx install .
+pip install "git+https://github.com/s-osorio-gom/prepublish-guard@v0.1.1"   # or: pipx install .
 prepublish-guard scan .                      # files that a push would publish (tracked files)
 prepublish-guard scan . --history            # ...and every line ever added, on every branch and tag
 prepublish-guard scan . --format sarif --output results.sarif   # for GitHub code scanning
@@ -72,23 +72,23 @@ Report formats: `text`, `markdown` (for a PR comment), `json` and `sarif` (SARIF
 "fixes" them in a second commit. The working-tree scan looks clean:
 
 ```
-prepublish-guard 0.1.0: 0 finding(s) [high 0, medium 0, low 0] in 3 file(s)
+prepublish-guard 0.1.1: 0 finding(s) [high 0, medium 0, low 0] in 3 file(s)
 ```
 
 The history scan shows that nothing was actually removed:
 
 ```
-prepublish-guard 0.1.0: 7 finding(s) [high 5, medium 1, low 1] in 3 file(s) and 2 commit(s)
+prepublish-guard 0.1.1: 7 finding(s) [high 5, medium 1, low 1] in 3 file(s) and 2 commit(s)
 
 == secret (3)
-  [HIGH  ] HISTORY settings.py:1 (first added in 68dd34f53d)  url_with_password: password embedded in a connection URL  -> Su********* (11 chars)  #0abdda661ec533e8
+  [HIGH  ] HISTORY settings.py:1 (first added in 68dd34f53d)  url_with_password: password embedded in a connection URL  -> Su********* (11 chars)  #c9c46fe878bed13f
   [HIGH  ] HISTORY settings.py:2 (first added in 68dd34f53d)  github_token: GitHub token committed in plain text  -> gh************ (40 chars)  #bb89af0ac19d744a
   [HIGH  ] HISTORY settings.py:3 (first added in 68dd34f53d)  aws_access_key_id: AWS access key id committed in plain text  -> AK************ (20 chars)  #72e2ef3d5fdcfa37
   what to do: Revoke or rotate it at the provider first: once pushed, deleting it from the code does not make it safe. ...
 
 == personal data (3)
-  [HIGH  ] HISTORY clientes.csv (first added in 68dd34f53d)  pii_column: column `cedula` holds 2 personal value(s)  -> cedula  #7dd103c6b5aa3238
-  [HIGH  ] HISTORY clientes.csv (first added in 68dd34f53d)  pii_column: column `celular` holds 2 personal value(s)  -> celular  #f6c465cb7d2e62e6
+  [HIGH  ] HISTORY clientes.csv (first added in 68dd34f53d)  pii_column: column `cedula` holds 2 personal value(s)  -> cedula  #2a32f4428b31a0ff
+  [HIGH  ] HISTORY clientes.csv (first added in 68dd34f53d)  pii_column: column `celular` holds 2 personal value(s)  -> celular  #71d34175afada5ed
   [MEDIUM] HISTORY README.md:3 (first added in 68dd34f53d)  email_address: personal e-mail address  -> [hidden, 28 chars]  #e42afd2dffdbc515
   what to do: Remove it or replace it with fictional data. ...
 
@@ -110,17 +110,20 @@ appears in 105 notebook cells is reported once, not 105 times.
 ```yaml
 repos:
   - repo: https://github.com/s-osorio-gom/prepublish-guard
-    rev: v0.1.0
+    rev: v0.1.1
     hooks:
       - id: prepublish-guard
 ```
 
+The hook scans the whole working copy, including untracked files that are not git-ignored, so a stray file with a
+token blocks the commit even if you did not stage it.
+
 **GitHub Actions.** The results appear in the repository's *Security → Code scanning* tab:
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v5
   with: { fetch-depth: 0 }          # full history
-- uses: s-osorio-gom/prepublish-guard@v0.1.0
+- uses: s-osorio-gom/prepublish-guard@v0.1.1
   with: { history: "true" }
 ```
 
@@ -141,7 +144,8 @@ fail_on = "medium"                                     # low | medium | high | n
 ```
 
 `prepublish-guard baseline . --history` accepts the current findings. It writes only their fingerprints to `ignore`,
-never the values. After that, only new findings fail the check.
+never the values. After that, only new findings fail the check. Accepting a CSV column finding accepts the values the
+column holds now: a new value in that column reports the column again.
 
 ## How well it works
 
@@ -180,7 +184,11 @@ which the author then cleaned from the files and the history:
 - A shallow clone has an incomplete history. The report says so; in CI use `actions/checkout` with
   `fetch-depth: 0`.
 - In a table already reported for its personal columns (`pii_column`), the individual values of those columns are
-  not listed one by one.
+  not listed one by one. Accepting a column accepts the values it holds now; removing values from it also changes
+  its fingerprint, so take the baseline again after cleaning a table.
+- In history, rows added to a CSV in a commit that does not touch its header line are checked line by line only.
+  A bare ID number (no "cédula" or similar context) added that way and later removed is not reported; the
+  pre-commit hook catches it when it is added. Planned for 0.1.2.
 - On very large histories, `--max-commits N` limits the scan to the newest commits.
 - E-mails in datasets you publish on purpose need `allowed_email_domains`, `allow_paths` or a `baseline`.
 
@@ -188,7 +196,7 @@ which the author then cleaned from the files and the history:
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 68 tests
+pytest -q            # 72 tests
 ruff check .
 bash examples/demo.sh /tmp/pg-demo
 ```

@@ -25,6 +25,9 @@ class Hit:
     severity: str
     value: str
     message: str
+    covers: frozenset[str] = frozenset()   # pii_column: hashes of the values the per-line rules find in it
+    cells: frozenset[str] = frozenset()    # pii_column: hashes of its personal cells (accepting it is per content)
+    column: int = -1                       # pii_column: position, so two columns with the same name stay apart
 
 
 # ------------------------------------------------------------------------------------------------ helpers
@@ -301,7 +304,7 @@ _PII_COLUMN = re.compile(r"(?i)^(?:c[ée]dula|cc|documento|numero_documento|n[u�
                          r"phone_number|celular|mobile|movil|m[oó]vil|email|e-mail|correo|correo_electr[oó]nico)$")
 
 
-def scan_file_level(path: str, text: str) -> list[Hit]:
+def scan_file_level(path: str, text: str, allowed_email_domains: set[str] | None = None) -> list[Hit]:
     hits: list[Hit] = []
     for m in _PEM.finditer(text):
         hits.append(Hit("private_key", "secret", "high", m.group(0)[:80], "private key block"))
@@ -311,11 +314,11 @@ def scan_file_level(path: str, text: str) -> list[Hit]:
             hits.append(Hit(rule, "sensitive_file", sev, path, f"{label} is tracked in the repository"))
             break
     if name.lower().endswith((".csv", ".tsv")):
-        hits += _csv_columns(path, text)
+        hits += _csv_columns(path, text, allowed_email_domains or set())
     return hits
 
 
-def _csv_columns(path: str, text: str) -> list[Hit]:
+def _csv_columns(path: str, text: str, allowed_email_domains: set[str]) -> list[Hit]:
     try:
         rows = list(csv.reader(io.StringIO(text[:2_000_000]), delimiter="\t" if path.lower().endswith(".tsv") else ","))
     except csv.Error:
@@ -326,11 +329,23 @@ def _csv_columns(path: str, text: str) -> list[Hit]:
     hits = []
     for i in cols:
         values = [r[i] for r in rows[1:] if i < len(r) and r[i].strip()]
-        real = [v for v in values if len(re.sub(r"\D", "", v)) >= 7 or "@" in v]
+        real = [v for v in values if _personal_cell(v, allowed_email_domains)]
         if real:
+            covers = {value_hash(h.value) for v in values
+                      for h in _personal_line(v, path, allowed_email_domains)}
             hits.append(Hit("pii_column", "personal_data", "high", rows[0][i],
-                            f"column `{rows[0][i].strip()}` holds {len(real)} personal value(s)"))
+                            f"column `{rows[0][i].strip()}` holds {len(real)} personal value(s)", frozenset(covers),
+                            frozenset(value_hash(v.strip()) for v in real), i))
     return hits
+
+
+def _personal_cell(value: str, allowed_email_domains: set[str]) -> bool:
+    """A cell counts as personal when the per-line rules report something in it (so example, test and noreply
+    domains, `allowed_email_domains` and URL user names do not count), or when it holds an ID or phone-length
+    number besides any e-mail address."""
+    if next(_personal_line(value, "", allowed_email_domains), None) is not None:
+        return True
+    return len(re.sub(r"\D", "", _EMAIL.sub("", value))) >= 7
 
 
 def to_finding(hit: Hit, path: str, line: int) -> Finding:
@@ -342,8 +357,14 @@ def to_finding(hit: Hit, path: str, line: int) -> Finding:
         preview = hidden(hit.value)                          # a few characters + length can be enough to guess it
     else:
         preview = mask(hit.value)
-    return Finding(rule=hit.rule, category=hit.category, severity=hit.severity, path=path, line=line,
-                   preview=preview, message=hit.message, value_sha256=value_hash(hit.value))
+    identity = f"{hit.value}\0{hit.column}" if hit.rule == "pii_column" else hit.value
+    finding = Finding(rule=hit.rule, category=hit.category, severity=hit.severity, path=path, line=line,
+                      preview=preview, message=hit.message, value_sha256=value_hash(identity))
+    if hit.covers:
+        finding.extra["_covers"] = set(hit.covers)           # internal, removed before any report
+    if hit.cells:
+        finding.extra["_cells"] = set(hit.cells)             # sealed into the fingerprint by scanner.full_scan
+    return finding
 
 
 LineScanner = Callable[[str, str], list[Hit]]
