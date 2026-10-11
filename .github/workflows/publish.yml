@@ -1,0 +1,31 @@
+# Publishes to PyPI with Trusted Publishing (OIDC): no token is stored anywhere.
+# Runs when a GitHub release is published, or by hand (Actions -> publish -> Run workflow).
+name: publish
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.12" }
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with: { name: dist, path: dist/ }
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi            # approval and branch limits live in this GitHub environment
+    permissions:
+      id-token: write            # the only permission Trusted Publishing needs
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist/ }
+      - uses: pypa/gh-action-pypi-publish@release/v1
