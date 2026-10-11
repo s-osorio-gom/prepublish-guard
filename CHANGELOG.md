@@ -15,6 +15,8 @@ Fixes found by using 0.1.0 on a real repository (each has a test in `tests/test_
   reported. A number next to an example e-mail in the same cell still counts, and a URL user name
   (`https://user@host`) is not an e-mail.
 - Note: column fingerprints changed, so a 0.1.0 baseline that accepted a CSV column must be taken again.
+- Known limitation (also in 0.1.0, planned for 0.1.2): in history, a bare ID number added to a CSV in a commit that
+  does not touch its header, and later removed, is not reported.
 - The Action passes its inputs to the script through environment variables, skips the SARIF upload when the
   scan step did not produce a file, and uses `actions/setup-python@v6` and `codeql-action/upload-sarif@v4`
   (Node 24). Examples use `actions/checkout@v5`.
