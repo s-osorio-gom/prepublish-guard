@@ -28,6 +28,7 @@ class Hit:
     covers: frozenset[str] = frozenset()   # pii_column: hashes of the values the per-line rules find in it
     cells: frozenset[str] = frozenset()    # pii_column: hashes of its personal cells (accepting it is per content)
     column: int = -1                       # pii_column: position, so two columns with the same name stay apart
+    bare: frozenset[str] = frozenset()     # pii_column: hashes of the personal cells no per-line rule reports
 
 
 # ------------------------------------------------------------------------------------------------ helpers
@@ -304,7 +305,10 @@ _PII_COLUMN = re.compile(r"(?i)^(?:c[ée]dula|cc|documento|numero_documento|n[u�
                          r"phone_number|celular|mobile|movil|m[oó]vil|email|e-mail|correo|correo_electr[oó]nico)$")
 
 
-def scan_file_level(path: str, text: str, allowed_email_domains: set[str] | None = None) -> list[Hit]:
+def scan_file_level(path: str, text: str, allowed_email_domains: set[str] | None = None, *, strict_rows: bool = False,
+                    allowed: Callable[[str], bool] | None = None) -> list[Hit]:
+    """File-level rules. `strict_rows` (history hunks, which may start inside a quoted cell) keeps only the table
+    rows shaped like the header; `allowed` (allow_regex) leaves matching cells out of `Hit.bare`."""
     hits: list[Hit] = []
     for m in _PEM.finditer(text):
         hits.append(Hit("private_key", "secret", "high", m.group(0)[:80], "private key block"))
@@ -314,28 +318,54 @@ def scan_file_level(path: str, text: str, allowed_email_domains: set[str] | None
             hits.append(Hit(rule, "sensitive_file", sev, path, f"{label} is tracked in the repository"))
             break
     if name.lower().endswith((".csv", ".tsv")):
-        hits += _csv_columns(path, text, allowed_email_domains or set())
+        hits += _csv_columns(path, text, allowed_email_domains or set(), strict_rows, allowed)
     return hits
 
 
-def _csv_columns(path: str, text: str, allowed_email_domains: set[str]) -> list[Hit]:
+CSV_MAX_CHARS = 2_000_000                  # a table's columns are read from its first CSV_MAX_CHARS characters
+
+
+def complete_records(text: str) -> str:
+    """`text` without its trailing incomplete CSV record: cut after the last line end where the quotes balance, so a
+    cut never falls inside a value, even one that spans lines (a quote inside a quoted value is doubled)."""
+    cut = pos = quotes = 0
+    for line in text.split("\n")[:-1]:
+        pos += len(line) + 1
+        quotes += line.count('"')
+        if quotes % 2 == 0:
+            cut = pos
+    return text[:cut]
+
+
+def _csv_columns(path: str, text: str, allowed_email_domains: set[str], strict_rows: bool = False,
+                 allowed: Callable[[str], bool] | None = None) -> list[Hit]:
     try:
-        rows = list(csv.reader(io.StringIO(text[:2_000_000]), delimiter="\t" if path.lower().endswith(".tsv") else ","))
+        delimiter = "\t" if path.lower().endswith(".tsv") else ","
+        if len(text) > CSV_MAX_CHARS:                         # never cut inside a value
+            text = complete_records(text[:CSV_MAX_CHARS])
+        rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
     except csv.Error:
         return []
     if len(rows) < 2:
         return []
+    data = [r for r in rows[1:] if len(r) == len(rows[0])] if strict_rows else rows[1:]
     cols = [i for i, h in enumerate(rows[0]) if _PII_COLUMN.match(h.strip().replace(" ", "_"))]
     hits = []
     for i in cols:
-        values = [r[i] for r in rows[1:] if i < len(r) and r[i].strip()]
+        values = [r[i] for r in data if i < len(r) and r[i].strip()]
         real = [v for v in values if _personal_cell(v, allowed_email_domains)]
         if real:
             covers = {value_hash(h.value) for v in values
                       for h in _personal_line(v, path, allowed_email_domains)}
+            # allow_regex may name the value or, as for line findings, its whole row.
+            bare = frozenset(value_hash(r[i].strip()) for r in data
+                             if i < len(r) and r[i].strip() and _personal_cell(r[i], allowed_email_domains)
+                             and not any(not (allowed and allowed(h.value))
+                                         for h in _personal_line(r[i], path, allowed_email_domains))
+                             and not (allowed and (allowed(r[i].strip()) or allowed(delimiter.join(r)))))
             hits.append(Hit("pii_column", "personal_data", "high", rows[0][i],
                             f"column `{rows[0][i].strip()}` holds {len(real)} personal value(s)", frozenset(covers),
-                            frozenset(value_hash(v.strip()) for v in real), i))
+                            frozenset(value_hash(v.strip()) for v in real), i, bare))
     return hits
 
 
@@ -364,6 +394,8 @@ def to_finding(hit: Hit, path: str, line: int) -> Finding:
         finding.extra["_covers"] = set(hit.covers)           # internal, removed before any report
     if hit.cells:
         finding.extra["_cells"] = set(hit.cells)             # sealed into the fingerprint by scanner.full_scan
+    if hit.bare:
+        finding.extra["_bare"] = set(hit.bare)               # history: removed bare IDs (scanner.full_scan)
     return finding
 
 

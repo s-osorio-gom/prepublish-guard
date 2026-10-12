@@ -186,9 +186,9 @@ which the author then cleaned from the files and the history:
 - In a table already reported for its personal columns (`pii_column`), the individual values of those columns are
   not listed one by one. Accepting a column accepts the values it holds now; removing values from it also changes
   its fingerprint, so take the baseline again after cleaning a table.
-- In history, rows added to a CSV in a commit that does not touch its header line are checked line by line only.
-  A bare ID number (no "cédula" or similar context) added that way and later removed is not reported; the
-  pre-commit hook catches it when it is added. Planned for 0.1.2.
+- In history, rows added to a CSV/TSV in a commit that does not touch its header line are read with the header the
+  file had in that commit. A bare ID number under a personal column that was later removed is reported as
+  `pii_history_rows` (fixed in 0.1.2; earlier releases missed it).
 - On very large histories, `--max-commits N` limits the scan to the newest commits.
 - E-mails in datasets you publish on purpose need `allowed_email_domains`, `allow_paths` or a `baseline`.
 
