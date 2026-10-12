@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from .config import CONFIG_NAME, Config
-from .detectors import CSV_MAX_CHARS, scan_file_level, scan_line, term_pattern, to_finding
+from .detectors import CSV_MAX_CHARS, complete_records, scan_file_level, scan_line, term_pattern, to_finding
 from .findings import Finding, value_hash
 
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache",
@@ -83,8 +83,8 @@ def _first_record(lines: Iterable[str]) -> str | None:
 
 
 def _blob_text(root: Path, blob: str, limit: int) -> str | None:
-    """A stored file version, up to `limit` bytes and cut after its last complete line (never inside a value);
-    None when it cannot be read."""
+    """A stored file version, up to `limit` bytes and then cut after its last complete CSV record (never inside a
+    value); None when it cannot be read."""
     if not blob or not blob.strip("0"):
         return None
     proc = subprocess.Popen(["git", "-C", str(root), "cat-file", "blob", blob],
@@ -95,7 +95,7 @@ def _blob_text(root: Path, blob: str, limit: int) -> str | None:
     proc.kill()
     proc.wait()
     if len(data) > limit:
-        data = data[:data.rfind(b"\n", 0, limit) + 1]
+        return complete_records(data[:limit].decode("utf-8", errors="replace")) or None
     return data.decode("utf-8", errors="replace") if data else None
 
 
@@ -271,7 +271,13 @@ class Scanner:
         added: list[str] = []          # lines added to `path` in `commit`: file-level rules (CSV columns, key blocks)
         blobs: tuple[str, str] = ("", "")   # `path` before and after `commit` (git object ids)
         header_touched = False         # a hunk changed a line of the header record
-        headers: dict[str, str] = {}   # header record of each table version seen: rows-only commits keep the old one
+        headers: dict[str, str | None] = {}   # header record of each table version: rows-only commits keep the old one
+
+        def header_of(blob: str) -> str | None:
+            """The header record of a table version: remembered, or read from git once for a version not seen."""
+            if blob not in headers:
+                headers[blob] = _first_line(self.root, blob)
+            return headers[blob]
 
         def flush() -> None:
             nonlocal header_touched, blobs
@@ -288,10 +294,10 @@ class Scanner:
                 elif header_touched:
                     header, whole = _first_record(added), True
                 else:
-                    header = headers.get(blobs[0])
+                    header = header_of(blobs[0]) if blobs[0].strip("0") else None
                     if header is None and added:
-                        header = _first_line(self.root, blobs[1])
-                    if header is not None:
+                        header = header_of(blobs[1])
+                    if header is not None and added:
                         lines = [header, *added]
                 if header is not None and blobs[1]:
                     headers[blobs[1]] = header
@@ -337,7 +343,9 @@ class Scanner:
                     continue
                 old_start, old_count = int(m.group(1)), int(m.group(2) or 1)
                 lineno, new_count = int(m.group(3)), int(m.group(4) or 1)
-                span = (headers.get(blobs[0]) or "").count("\n") + 1      # lines of the old header record
+                tabular = bool(path) and path.lower().endswith((".csv", ".tsv"))
+                old_header = header_of(blobs[0]) if tabular and blobs[0].strip("0") else None
+                span = (old_header or "").count("\n") + 1                    # lines of the old header record
                 header_touched = header_touched or (1 <= old_start <= span and old_count > 0) or (
                     1 <= lineno <= span and new_count > 0)
                 continue

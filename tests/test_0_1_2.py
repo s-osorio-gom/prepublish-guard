@@ -321,3 +321,38 @@ def test_a_table_cut_at_the_column_parse_limit_does_not_compare_a_partial_cell(t
     (repo / "people.csv").write_text("nombre,cedula\nB,79" + "84512345\n")
     _commit(repo, "A removed")
     assert _history_rows_previews(repo) == ["1 value(s)"]
+
+
+# Fifth Codex review (d3a029f).
+
+def test_a_cut_inside_a_quoted_multi_line_cell_falls_back_to_the_last_whole_record(tmp_path):
+    rows = "B,79" + "84512345\n" + 'A,"10' + '23456781\n55' + '55555555"\n'   # A's cell spans two lines
+    repo = new_repo(tmp_path, {"people.csv": "nombre,codigo\n" + rows})
+    (repo / "people.csv").write_text("nombre,cedula\n" + rows)          # read whole, cut at 45 bytes: inside A
+    _commit(repo, "the column is a cedula")
+    (repo / "people.csv").write_text("nombre,cedula\n" + rows.split("\n", 1)[1])   # B removed; A kept whole
+    _commit(repo, "B removed")
+    assert _history_rows_previews(repo, Config(max_file_bytes=45)) == ["1 value(s)"]
+
+
+def test_a_history_window_that_starts_at_a_header_edit_reads_the_old_header_from_git(tmp_path):
+    before = '"notas\nlargas",nombre\nx,10' + '23456781\ny,79' + '845123\n'
+    after = before.replace("nombre", "cedula")                         # only the header's second line changes
+    repo = new_repo(tmp_path, {"people.csv": before})
+    (repo / "people.csv").write_text(after)
+    _commit(repo, "a column renamed")
+    (repo / "people.csv").write_text(after.replace("y,79" + "845123\n", ""))
+    _commit(repo, "y removed")
+    res = full_scan(repo, Config(), history=True, max_commits=2)        # the table's first version is not scanned
+    assert [f.preview for f in res.findings if f.rule == "pii_history_rows"] == ["1 value(s)"]
+
+
+def test_a_commit_that_only_deletes_rows_passes_the_header_on_without_a_git_call(tmp_path, monkeypatch):
+    calls = _count_git_reads(monkeypatch)
+    repo = new_repo(tmp_path, {"people.csv": TABLE + EXTRA})
+    (repo / "people.csv").write_text(TABLE)                            # deletion only
+    _commit(repo, "row removed")
+    (repo / "people.csv").write_text(TABLE + "Eva,52" + "345678\n")     # rows only
+    _commit(repo, "row added")
+    full_scan(repo, Config(), history=True)
+    assert calls == []

@@ -325,12 +325,24 @@ def scan_file_level(path: str, text: str, allowed_email_domains: set[str] | None
 CSV_MAX_CHARS = 2_000_000                  # a table's columns are read from its first CSV_MAX_CHARS characters
 
 
+def complete_records(text: str) -> str:
+    """`text` without its trailing incomplete CSV record: cut after the last line end where the quotes balance, so a
+    cut never falls inside a value, even one that spans lines (a quote inside a quoted value is doubled)."""
+    cut = pos = quotes = 0
+    for line in text.split("\n")[:-1]:
+        pos += len(line) + 1
+        quotes += line.count('"')
+        if quotes % 2 == 0:
+            cut = pos
+    return text[:cut]
+
+
 def _csv_columns(path: str, text: str, allowed_email_domains: set[str], strict_rows: bool = False,
                  allowed: Callable[[str], bool] | None = None) -> list[Hit]:
     try:
         delimiter = "\t" if path.lower().endswith(".tsv") else ","
-        if len(text) > CSV_MAX_CHARS:                         # cut after a complete line, never inside a value
-            text = text[:text.rfind("\n", 0, CSV_MAX_CHARS) + 1]
+        if len(text) > CSV_MAX_CHARS:                         # never cut inside a value
+            text = complete_records(text[:CSV_MAX_CHARS])
         rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
     except csv.Error:
         return []
