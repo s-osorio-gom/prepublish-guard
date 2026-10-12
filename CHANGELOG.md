@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased (0.1.2)
+
+- Fixed the known limitation of 0.1.0 and 0.1.1 (each case has a test in `tests/test_0_1_2.py`). In history, a bare
+  ID number found only through its column (`cedula`, `documento`, ...) and later removed from the table is now
+  reported as `pii_history_rows`, also when:
+  - the commit that added it did not touch the table's header line (the header is read from that commit);
+  - the table is still there;
+  - the table was later deleted.
+- A history scan now reads one more small object per commit that adds rows to a CSV/TSV without its header: the
+  file's first line at that commit.
+
 ## 0.1.1 (2026-10-11)
 
 Fixes found by using 0.1.0 on a real repository (each has a test in `tests/test_0_1_1.py`):

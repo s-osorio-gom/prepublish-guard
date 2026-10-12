@@ -68,6 +68,21 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
                           errors="replace")
 
 
+def _first_line(root: Path, commit: str | None, path: str) -> str | None:
+    """The first line of `path` (relative to the repository root) as stored in `commit`, without reading the rest
+    of the file; None when it cannot be read."""
+    if not commit:
+        return None
+    proc = subprocess.Popen(["git", "-C", str(root), "cat-file", "blob", f"{commit}:{path}"],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    assert proc.stdout is not None
+    first = proc.stdout.readline(1_000_000)
+    proc.stdout.close()
+    proc.kill()
+    proc.wait()
+    return first.decode("utf-8", errors="replace").rstrip("\r\n") if first else None
+
+
 def is_git_repo(root: Path) -> bool:
     p = _git(root, "rev-parse", "--is-inside-work-tree")
     return p.returncode == 0 and p.stdout.strip() == "true"
@@ -218,13 +233,22 @@ class Scanner:
         commit, path, lineno = None, None, 0
         first: dict[str, Finding] = {}
         added: list[str] = []          # lines added to `path` in `commit`: file-level rules (CSV columns, key blocks)
+        header_added = False           # line 1 of `path` is among them
 
         def flush() -> None:
+            nonlocal header_added
             if path and added and not self._allowed_path(path):
-                for hit in scan_file_level(path, "\n".join(added) + "\n", self._email_domains):
+                lines = added
+                if not header_added and path.lower().endswith((".csv", ".tsv")):
+                    # Rows added without the header line: read the header at that commit, so that a value found
+                    # only through its column (a bare ID under `cedula`) is still checked.
+                    header = _first_line(self.root, commit, prefix + path)
+                    lines = [header, *added] if header is not None else added
+                for hit in scan_file_level(path, "\n".join(lines) + "\n", self._email_domains):
                     if hit.category != "sensitive_file" and not self._allowed_value(hit.value):
                         self._remember(first, to_finding(hit, path, 0), commit)
             added.clear()
+            header_added = False
 
         assert proc.stdout is not None
         for raw in proc.stdout:
@@ -248,8 +272,9 @@ class Scanner:
                         self._remember(first, to_finding(hit, path, 0), commit)
                 continue
             if line.startswith("@@"):
-                m = re.search(r"\+(\d+)", line)
+                m = re.search(r"\+(\d+)(?:,(\d+))?", line)
                 lineno = int(m.group(1)) if m else 0
+                header_added = header_added or (lineno == 1 and (m.group(2) or "1") != "0")
                 continue
             if path and line.startswith("+") and not line.startswith("+++"):
                 if not self._allowed_path(path):
@@ -317,6 +342,17 @@ def full_scan(root: Path, config: Config, history: bool = False, include_untrack
                 folded.setdefault(f.path, set()).add(f.value_sha256)
             elif f.path not in res.partial and f.value_sha256 not in res.covers[f.path] and f.key not in in_tree:
                 gone.setdefault(f.path, set()).add(f.value_sha256)   # once in the table, no longer: history only
+        # Values found only through their column (a bare ID under `cedula`) have no line finding of their own:
+        # compare the cells each column held in history with the cells the current table holds.
+        cells_now: dict[str, set[str]] = {}
+        for f in res.findings:
+            if f.rule == "pii_column" and f.in_working_tree:
+                cells_now.setdefault(f.path, set()).update(f.extra.get("_cells", set()))
+        for f in hist.findings:
+            if f.rule == "pii_column" and f.key in in_tree and f.path not in res.partial:
+                removed = f.extra.get("_cells", set()) - cells_now[f.path]
+                if removed:
+                    gone.setdefault(f.path, set()).update(removed)
         res.findings += [_history_rows(path, values) for path, values in sorted(gone.items())]
         _seal(res.findings, folded)
     else:
