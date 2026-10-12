@@ -297,3 +297,27 @@ def test_a_whole_table_version_keeps_rows_with_fewer_fields(tmp_path):
     (repo / "people.csv").write_text("nombre,cedula,notas\nAna,10" + "23456781,x\n")
     _commit(repo, "Luis removed")
     assert _history_rows_previews(repo) == ["1 value(s)"]
+
+
+# Fourth Codex review (d8c5075).
+
+def test_a_whole_version_cut_at_max_file_bytes_does_not_compare_a_partial_cell(tmp_path):
+    before = "nombre,codigo\nA,10" + "23456781\nB,79" + "84512345\n"          # 40 bytes
+    repo = new_repo(tmp_path, {"people.csv": before})
+    (repo / "people.csv").write_text(before.replace("codigo", "cedula"))  # read whole, cut at 36 bytes: "B,7984512"
+    _commit(repo, "the column is a cedula")
+    (repo / "people.csv").write_text("nombre,cedula\nB,79" + "84512345\n")  # A removed; B's full value kept
+    _commit(repo, "A removed")
+    assert _history_rows_previews(repo, Config(max_file_bytes=36)) == ["1 value(s)"]
+
+
+def test_a_table_cut_at_the_column_parse_limit_does_not_compare_a_partial_cell(tmp_path, monkeypatch):
+    import prepublish_guard.detectors as detectors
+    import prepublish_guard.scanner as scanner
+    for module in (detectors, scanner):
+        monkeypatch.setattr(module, "CSV_MAX_CHARS", 36)
+    before = "nombre,cedula\nA,10" + "23456781\nB,79" + "84512345\n"          # created whole, parsed up to 36
+    repo = new_repo(tmp_path, {"people.csv": before})
+    (repo / "people.csv").write_text("nombre,cedula\nB,79" + "84512345\n")
+    _commit(repo, "A removed")
+    assert _history_rows_previews(repo) == ["1 value(s)"]

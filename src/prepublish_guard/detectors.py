@@ -329,7 +329,9 @@ def _csv_columns(path: str, text: str, allowed_email_domains: set[str], strict_r
                  allowed: Callable[[str], bool] | None = None) -> list[Hit]:
     try:
         delimiter = "\t" if path.lower().endswith(".tsv") else ","
-        rows = list(csv.reader(io.StringIO(text[:CSV_MAX_CHARS]), delimiter=delimiter))
+        if len(text) > CSV_MAX_CHARS:                         # cut after a complete line, never inside a value
+            text = text[:text.rfind("\n", 0, CSV_MAX_CHARS) + 1]
+        rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
     except csv.Error:
         return []
     if len(rows) < 2:

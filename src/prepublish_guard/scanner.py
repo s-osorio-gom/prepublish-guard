@@ -83,16 +83,19 @@ def _first_record(lines: Iterable[str]) -> str | None:
 
 
 def _blob_text(root: Path, blob: str, limit: int) -> str | None:
-    """A stored file version, up to `limit` bytes; None when it cannot be read."""
+    """A stored file version, up to `limit` bytes and cut after its last complete line (never inside a value);
+    None when it cannot be read."""
     if not blob or not blob.strip("0"):
         return None
     proc = subprocess.Popen(["git", "-C", str(root), "cat-file", "blob", blob],
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     assert proc.stdout is not None
-    data = proc.stdout.read(limit)
+    data = proc.stdout.read(limit + 1)
     proc.stdout.close()
     proc.kill()
     proc.wait()
+    if len(data) > limit:
+        data = data[:data.rfind(b"\n", 0, limit) + 1]
     return data.decode("utf-8", errors="replace") if data else None
 
 
