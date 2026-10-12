@@ -189,3 +189,34 @@ def test_a_rows_only_commit_whose_previous_version_was_not_scanned_reads_the_hea
     _commit(repo, "row removed")
     # The two newest commits only: the table's earlier versions are not scanned.
     assert main(["scan", str(repo), "--history", "--max-commits", "2"]) == 1
+
+
+# Codex review of 01ba1f5.
+
+QUOTED_HEADER = '"notas\nlargas",cedula\nx,10' + '23456781\n'
+
+
+def _removed_row_repo(tmp_path, table, extra):
+    repo = new_repo(tmp_path, {"people.csv": table})
+    assert main(["baseline", str(repo), "--history"]) == 0
+    _commit(repo, "baseline")
+    (repo / "people.csv").write_text(table + extra)               # rows-only hunk
+    _commit(repo, "row")
+    (repo / "people.csv").write_text(table)
+    _commit(repo, "row removed")
+    return repo
+
+
+def test_a_header_with_a_quoted_line_break_is_read_whole_from_the_diff(tmp_path):
+    repo = _removed_row_repo(tmp_path, QUOTED_HEADER, "y,79" + "845123\n")
+    assert main(["scan", str(repo), "--history"]) == 1
+
+
+def test_a_header_with_a_quoted_line_break_is_read_whole_from_git(tmp_path):
+    repo = _removed_row_repo(tmp_path, QUOTED_HEADER, "y,79" + "845123\n")
+    assert main(["scan", str(repo), "--history", "--max-commits", "2"]) == 1
+
+
+def test_allow_regex_matching_the_whole_removed_row_is_honoured(tmp_path):
+    repo = _removed_row_repo(tmp_path, TABLE, EXTRA)
+    assert _history_rows_previews(repo, Config(allow_regex=["^Luis,"])) == []

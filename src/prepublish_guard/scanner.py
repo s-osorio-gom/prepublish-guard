@@ -7,7 +7,7 @@ import fnmatch
 import os
 import re
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -68,18 +68,33 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
                           errors="replace")
 
 
+def _first_record(lines: Iterable[str]) -> str | None:
+    """The first CSV record of `lines` (a table's header), which spans several lines when a quoted name holds a line
+    break: complete once its quotes balance (a quote inside a quoted name is doubled). None when it never completes
+    within 100 lines."""
+    record: list[str] = []
+    for line in lines:
+        record.append(line)
+        if sum(part.count('"') for part in record) % 2 == 0:
+            return "\n".join(record)
+        if len(record) >= 100:
+            break
+    return None
+
+
 def _first_line(root: Path, blob: str) -> str | None:
-    """The first line of a stored file version, without reading the rest of it; None when it cannot be read."""
+    """The header record of a stored file version, without reading the rest of it; None when it cannot be read."""
     if not blob or not blob.strip("0"):
         return None
     proc = subprocess.Popen(["git", "-C", str(root), "cat-file", "blob", blob],
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     assert proc.stdout is not None
-    first = proc.stdout.readline(1_000_000)
+    raw_lines = iter(lambda: proc.stdout.readline(1_000_000), b"")
+    header = _first_record(raw.decode("utf-8", errors="replace").rstrip("\r\n") for raw in raw_lines)
     proc.stdout.close()
     proc.kill()
     proc.wait()
-    return first.decode("utf-8", errors="replace").rstrip("\r\n") if first else None
+    return header
 
 
 def is_git_repo(root: Path) -> bool:
@@ -248,7 +263,8 @@ class Scanner:
             if path and not self._allowed_path(path) and path.lower().endswith((".csv", ".tsv")):
                 # A value found only through its column (a bare ID under `cedula`) needs the header, which a commit
                 # that only adds rows does not show: take it from the previous version, or read it from git.
-                header = added[0] if header_added and added else (None if header_lost else headers.get(blobs[0]))
+                header = (_first_record(added) if header_added else
+                          None if header_lost else headers.get(blobs[0]))
                 if header is None and added:
                     header = _first_line(self.root, blobs[1])
                 if header is not None and blobs[1]:

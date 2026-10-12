@@ -343,9 +343,11 @@ def _csv_columns(path: str, text: str, allowed_email_domains: set[str], strict_r
         if real:
             covers = {value_hash(h.value) for v in values
                       for h in _personal_line(v, path, allowed_email_domains)}
-            bare = frozenset(value_hash(v.strip()) for v in real
-                             if next(_personal_line(v, path, allowed_email_domains), None) is None
-                             and not (allowed and allowed(v.strip())))
+            # allow_regex may name the value or, as for line findings, its whole row.
+            bare = frozenset(value_hash(r[i].strip()) for r in data
+                             if i < len(r) and r[i].strip() and _personal_cell(r[i], allowed_email_domains)
+                             and next(_personal_line(r[i], path, allowed_email_domains), None) is None
+                             and not (allowed and (allowed(r[i].strip()) or allowed(delimiter.join(r)))))
             hits.append(Hit("pii_column", "personal_data", "high", rows[0][i],
                             f"column `{rows[0][i].strip()}` holds {len(real)} personal value(s)", frozenset(covers),
                             frozenset(value_hash(v.strip()) for v in real), i, bare))
