@@ -220,3 +220,55 @@ def test_a_header_with_a_quoted_line_break_is_read_whole_from_git(tmp_path):
 def test_allow_regex_matching_the_whole_removed_row_is_honoured(tmp_path):
     repo = _removed_row_repo(tmp_path, TABLE, EXTRA)
     assert _history_rows_previews(repo, Config(allow_regex=["^Luis,"])) == []
+
+
+# Second Codex review (fe67636).
+
+def test_an_allowed_e_mail_does_not_hide_a_bare_id_in_the_same_cell(tmp_path):
+    email = "luis.mora" + "@" + "gmail.com"
+    repo = _removed_row_repo(tmp_path, TABLE, "Luis,79" + f"845123 {email}\n")
+    allowed = Config(allow_regex=["^luis\\.mora" + "@" + "gmail\\.com$"])
+    assert _history_rows_previews(repo, allowed) == ["1 value(s)"]
+
+
+def test_a_header_edited_on_its_continuation_line_is_read_again(tmp_path):
+    before = '"notas\nlargas",nombre\nx,10' + '23456781\n'
+    after = '"notas\nlargas",cedula\nx,10' + '23456781\n'           # only the header's second line changes
+    repo = new_repo(tmp_path, {"people.csv": before})
+    (repo / "people.csv").write_text(after)
+    _commit(repo, "a column renamed")
+    assert main(["baseline", str(repo), "--history"]) == 0
+    _commit(repo, "baseline")
+    (repo / "people.csv").write_text(after + "y,79" + "845123\n")
+    _commit(repo, "row")
+    (repo / "people.csv").write_text(after)
+    _commit(repo, "row removed")
+    assert main(["scan", str(repo), "--history"]) == 1
+
+
+def test_a_header_renamed_to_a_personal_column_is_used_by_the_next_rows_only_commit(tmp_path):
+    before = "nombre,codigo\nx,10" + "23456781\n"
+    after = "nombre,cedula\nx,10" + "23456781\n"
+    repo = new_repo(tmp_path, {"people.csv": before})
+    (repo / "people.csv").write_text(after)
+    _commit(repo, "a column renamed")
+    assert main(["baseline", str(repo), "--history"]) == 0
+    _commit(repo, "baseline")
+    (repo / "people.csv").write_text(after + EXTRA)
+    _commit(repo, "row")
+    (repo / "people.csv").write_text(after)
+    _commit(repo, "row removed")
+    assert main(["scan", str(repo), "--history"]) == 1
+
+
+def test_a_partly_changed_header_line_is_not_read_as_a_row(tmp_path):
+    table = '"notas\nlargas",cedula\nx,10' + '23456781\n'
+    edited = '"notes\nlargas",cedula\nx,10' + '23456781\n'          # the header's first line changes...
+    repo = new_repo(tmp_path, {"people.csv": table})
+    assert main(["baseline", str(repo), "--history"]) == 0
+    _commit(repo, "baseline")
+    (repo / "people.csv").write_text(edited + EXTRA)               # ...in the commit that adds a row
+    _commit(repo, "header edited, row added")
+    (repo / "people.csv").write_text(edited)
+    _commit(repo, "row removed")
+    assert main(["scan", str(repo), "--history"]) == 1

@@ -253,31 +253,35 @@ class Scanner:
         first: dict[str, Finding] = {}
         added: list[str] = []          # lines added to `path` in `commit`: file-level rules (CSV columns, key blocks)
         blobs: tuple[str, str] = ("", "")   # `path` before and after `commit` (git object ids)
-        header_added = False           # the new line 1 of `path` is the first of `added`
-        header_lost = False            # the old line 1 was removed and nothing replaced it
-        headers: dict[str, str] = {}   # header line of each table version seen: rows-only commits keep the old one
+        header_touched = False         # a hunk changed a line of the header record
+        first_hunk = 0                 # lines the hunk starting at new line 1 adds (0: none starts there)
+        headers: dict[str, str] = {}   # header record of each table version seen: rows-only commits keep the old one
 
         def flush() -> None:
-            nonlocal header_added, header_lost
+            nonlocal header_touched, first_hunk, blobs
             lines = added
             if path and not self._allowed_path(path) and path.lower().endswith((".csv", ".tsv")):
                 # A value found only through its column (a bare ID under `cedula`) needs the header, which a commit
-                # that only adds rows does not show: take it from the previous version, or read it from git.
-                header = (_first_record(added) if header_added else
-                          None if header_lost else headers.get(blobs[0]))
+                # that only adds rows does not show: keep the previous version's, take a new one whole from the
+                # diff, or read it from git.
+                in_diff = _first_record(added[:first_hunk]) if header_touched and first_hunk else None
+                header = in_diff or (None if header_touched else headers.get(blobs[0]))
                 if header is None and added:
                     header = _first_line(self.root, blobs[1])
                 if header is not None and blobs[1]:
                     headers[blobs[1]] = header
-                if header is not None and not header_added:
-                    lines = [header, *added]
+                if header is not None and not in_diff:
+                    # Lines of a partly changed header record are not rows.
+                    skip = min(header.count("\n") + 1, first_hunk) if header_touched else 0
+                    lines = [header, *added[skip:]]
             if path and added and not self._allowed_path(path):
                 for hit in scan_file_level(path, "\n".join(lines) + "\n", self._email_domains, strict_rows=True,
                                            allowed=self._allowed_value):
                     if hit.category != "sensitive_file" and not self._allowed_value(hit.value):
                         self._remember(first, to_finding(hit, path, 0), commit)
             added.clear()
-            header_added = header_lost = False
+            # flush() runs again at the next diff or commit: it must not re-derive this version's header.
+            header_touched, first_hunk, blobs = False, 0, ("", "")
 
         assert proc.stdout is not None
         for raw in proc.stdout:
@@ -309,10 +313,13 @@ class Scanner:
                 if not m:
                     lineno = 0
                     continue
-                lineno = int(m.group(3))
-                new_first = lineno == 1 and m.group(4) != "0"
-                header_added = header_added or new_first
-                header_lost = header_lost or (m.group(1) == "1" and m.group(2) != "0" and not new_first)
+                old_start, old_count = int(m.group(1)), int(m.group(2) or 1)
+                lineno, new_count = int(m.group(3)), int(m.group(4) or 1)
+                span = (headers.get(blobs[0]) or "").count("\n") + 1      # lines of the old header record
+                header_touched = header_touched or (1 <= old_start <= span and old_count > 0) or (
+                    1 <= lineno <= span and new_count > 0)
+                if lineno == 1 and new_count > 0:
+                    first_hunk = new_count
                 continue
             if path and line.startswith("+") and not line.startswith("+++"):
                 if not self._allowed_path(path):

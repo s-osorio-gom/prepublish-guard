@@ -3,20 +3,23 @@
 ## Unreleased (0.1.2)
 
 - **Fixed the known limitation of 0.1.0 and 0.1.1.** In history, a bare ID number found only through its column
-  (`cedula`, `documento`, ...) and later removed from the table is now reported as `pii_history_rows`. It is reported
-  also when:
-  - the commit that added it did not touch the table's header line;
-  - the table is still there;
-  - the table was later deleted.
+  (`cedula`, `documento`, ...) and later removed from a table that still exists is now reported as
+  `pii_history_rows`. This includes IDs added in a commit that did not touch the header line.
+
+  When the whole table was later deleted, nothing changes in how it is reported: its history column finding (`pii_column`) covers
+  those IDs, as it already did for e-mails. An ID added without the header now also changes that finding's
+  fingerprint.
 
   Each case has a test in `tests/test_0_1_2.py`.
 - **How it reads the header.** A commit that only adds rows keeps the header of the table's previous version. The
-  header comes from the diff itself (`--full-index`). Git is asked for the first line only when that version was not
-  seen, for example with `--max-commits`.
+  header comes from the diff itself (`--full-index`), as the first complete CSV record, so a quoted name may hold a
+  line break. Git is asked for it only when that version was not seen (for example with `--max-commits`) or when the
+  commit changed the header only in part.
 - **Which rows are read.** History rows whose shape does not match the header are skipped, such as a change that
   starts inside a quoted multi-line cell.
-- **Which cells are compared.** Only cells that no per-line rule reports. So a removed e-mail is counted once, as
-  before, and `allow_regex` applies to removed IDs.
+- **Which cells are compared.** Only cells that no per-line rule reports, leaving out hits `allow_regex` accepts. So a
+  removed e-mail is counted once, as before. `allow_regex` applies to removed IDs, matched against the cell or the
+  whole row.
 - **Long CSV/TSV files.** When a file is longer than 2,000,000 characters (possible when `max_file_bytes` is raised),
   only that first part is checked for personal columns. The report says so, and the file's removed values are not
   compared.
