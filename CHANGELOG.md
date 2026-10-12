@@ -2,14 +2,30 @@
 
 ## Unreleased (0.1.2)
 
-- Fixed the known limitation of 0.1.0 and 0.1.1 (each case has a test in `tests/test_0_1_2.py`). In history, a bare
-  ID number found only through its column (`cedula`, `documento`, ...) and later removed from the table is now
-  reported as `pii_history_rows`, also when:
-  - the commit that added it did not touch the table's header line (the header is read from that commit);
+- **Fixed the known limitation of 0.1.0 and 0.1.1.** In history, a bare ID number found only through its column
+  (`cedula`, `documento`, ...) and later removed from the table is now reported as `pii_history_rows`. It is reported
+  also when:
+  - the commit that added it did not touch the table's header line;
   - the table is still there;
   - the table was later deleted.
-- A history scan now reads one more small object per commit that adds rows to a CSV/TSV without its header: the
-  file's first line at that commit.
+
+  Each case has a test in `tests/test_0_1_2.py`.
+- **How it reads the header.** A commit that only adds rows keeps the header of the table's previous version. The
+  header comes from the diff itself (`--full-index`). Git is asked for the first line only when that version was not
+  seen, for example with `--max-commits`.
+- **Which rows are read.** History rows whose shape does not match the header are skipped, such as a change that
+  starts inside a quoted multi-line cell.
+- **Which cells are compared.** Only cells that no per-line rule reports. So a removed e-mail is counted once, as
+  before, and `allow_regex` applies to removed IDs.
+- **Long CSV/TSV files.** When a file is longer than 2,000,000 characters (possible when `max_file_bytes` is raised),
+  only that first part is checked for personal columns. The report says so, and the file's removed values are not
+  compared.
+- **Upgrading from 0.1.1.** A 0.1.1 baseline reports again two kinds of table, because their fingerprint now covers
+  values 0.1.1 did not see:
+  - tables whose history held a bare ID that is no longer there;
+  - deleted tables that received rows without their header.
+
+  Review them and take the baseline again.
 
 ## 0.1.1 (2026-10-11)
 

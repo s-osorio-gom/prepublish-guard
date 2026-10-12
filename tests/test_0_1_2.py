@@ -87,3 +87,105 @@ def test_rows_only_hunks_are_read_with_their_header_when_scanning_a_subdirectory
     (sub / "people.csv").write_text(TABLE)
     _commit(repo, "row removed")
     assert main(["scan", str(sub), "--history"]) == 1
+
+
+# Independent review of the first version of the fix: each case below failed (or was unpinned) on it.
+
+def _history_rows_previews(repo, config=None):
+    res = full_scan(repo, config or Config(), history=True)
+    return [f.preview for f in res.findings if f.rule == "pii_history_rows"]
+
+
+def test_editing_the_continuation_line_of_a_quoted_cell_is_not_a_removed_value(tmp_path):
+    table = 'cedula,nombre,notas\n10' + '23456781,Ana,"visita\nreprogramada 2024-03-15"\n'
+    repo = new_repo(tmp_path, {"people.csv": table})
+    (repo / "people.csv").write_text(table.replace("03-15", "03-18"))  # the hunk starts inside the quoted cell
+    _commit(repo, "fix a date")
+    assert _history_rows_previews(repo) == []
+
+
+def test_a_csv_longer_than_the_column_parse_limit_is_not_compared(tmp_path, monkeypatch):
+    import prepublish_guard.detectors as detectors
+    import prepublish_guard.scanner as scanner
+    for module in (detectors, scanner):                              # 2,000 instead of 2,000,000 characters
+        monkeypatch.setattr(module, "CSV_MAX_CHARS", 2_000)
+    table = "nombre,cedula\n" + "".join(f"P{i:07d},10{i:08d}\n" for i in range(150))
+    assert len(table) > 2_000
+    repo = new_repo(tmp_path, {"people.csv": table})
+    (repo / "people.csv").write_text(table + EXTRA)                  # appended and kept: nothing was removed
+    _commit(repo, "row")
+    assert _history_rows_previews(repo) == []
+
+
+def test_a_commit_that_removes_the_header_line_makes_the_next_header_come_from_git(tmp_path, monkeypatch):
+    import prepublish_guard.scanner as scanner
+    calls = []
+    real = scanner._first_line
+    monkeypatch.setattr(scanner, "_first_line", lambda *a: calls.append(a) or real(*a))
+    repo = new_repo(tmp_path, {"people.csv": TABLE})
+    (repo / "people.csv").write_text(TABLE.split("\n", 1)[1] + EXTRA)   # header line gone, one row added
+    _commit(repo, "header removed")
+    full_scan(repo, Config(), history=True)
+    assert len(calls) == 1                                           # the old header is not reused
+
+
+def test_removed_bare_id_matching_allow_regex_is_not_reported(tmp_path):
+    repo = new_repo(tmp_path, {"people.csv": TABLE})
+    (repo / "people.csv").write_text(TABLE + EXTRA)
+    _commit(repo, "row")
+    (repo / "people.csv").write_text(TABLE)
+    _commit(repo, "row removed")
+    assert _history_rows_previews(repo) == ["1 value(s)"]
+    assert _history_rows_previews(repo, Config(allow_regex=["^79" + "845123$"])) == []
+
+
+def test_a_removed_cell_with_an_e_mail_counts_once_and_keeps_its_0_1_1_fingerprint(tmp_path):
+    from prepublish_guard.findings import value_hash
+    from prepublish_guard.scanner import _history_rows
+    email = "luis.mora" + "@" + "gmail.com"
+    table = "id,email\n1,ana.ruiz" + "@" + "gmail.com\n"
+    repo = new_repo(tmp_path, {"users.csv": table})
+    (repo / "users.csv").write_text(table + f"2,Luis Mora <{email}>\n")
+    _commit(repo, "row")
+    (repo / "users.csv").write_text(table)
+    _commit(repo, "row removed")
+    rows = [f for f in full_scan(repo, Config(), history=True).findings if f.rule == "pii_history_rows"]
+    assert [f.preview for f in rows] == ["1 value(s)"]
+    assert rows[0].fingerprint == _history_rows("users.csv", {value_hash(email)}).fingerprint
+
+
+def test_a_commit_that_deletes_the_first_row_and_appends_one_still_reads_the_header(tmp_path):
+    table = "nombre,cedula\nAna,10" + "23456781\nLuis,79" + "845123\n"
+    repo = new_repo(tmp_path, {"people.csv": table})
+    (repo / "people.csv").write_text("nombre,cedula\nLuis,79" + "845123\nEva,52" + "345678\n")   # @@ -2 +1,0 @@
+    _commit(repo, "first row out, one row in")
+    (repo / "people.csv").write_text("nombre,cedula\nLuis,79" + "845123\n")
+    _commit(repo, "row removed")
+    assert _history_rows_previews(repo) == ["2 value(s)"]
+
+
+def test_rows_only_commits_take_the_header_from_the_diff_without_a_git_call_each(tmp_path, monkeypatch):
+    import prepublish_guard.scanner as scanner
+    calls = []
+    real = scanner._first_line
+    monkeypatch.setattr(scanner, "_first_line", lambda *a: calls.append(a) or real(*a))
+    repo = new_repo(tmp_path, {"people.csv": TABLE})
+    text = TABLE
+    for i in range(20):
+        text += f"P{i},31{i:08d}\n"
+        (repo / "people.csv").write_text(text)
+        _commit(repo, f"row {i}")
+    assert [f.rule for f in full_scan(repo, Config(), history=True).findings] == ["pii_column"]
+    assert calls == []
+
+
+def test_a_rows_only_commit_whose_previous_version_was_not_scanned_reads_the_header_from_git(tmp_path):
+    repo = new_repo(tmp_path, {"people.csv": TABLE})
+    assert main(["baseline", str(repo), "--history"]) == 0
+    _commit(repo, "baseline")
+    (repo / "people.csv").write_text(TABLE + EXTRA)
+    _commit(repo, "row")
+    (repo / "people.csv").write_text(TABLE)
+    _commit(repo, "row removed")
+    # The two newest commits only: the table's earlier versions are not scanned.
+    assert main(["scan", str(repo), "--history", "--max-commits", "2"]) == 1

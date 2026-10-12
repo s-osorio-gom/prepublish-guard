@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from .config import CONFIG_NAME, Config
-from .detectors import scan_file_level, scan_line, term_pattern, to_finding
+from .detectors import CSV_MAX_CHARS, scan_file_level, scan_line, term_pattern, to_finding
 from .findings import Finding, value_hash
 
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache",
@@ -68,12 +68,11 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
                           errors="replace")
 
 
-def _first_line(root: Path, commit: str | None, path: str) -> str | None:
-    """The first line of `path` (relative to the repository root) as stored in `commit`, without reading the rest
-    of the file; None when it cannot be read."""
-    if not commit:
+def _first_line(root: Path, blob: str) -> str | None:
+    """The first line of a stored file version, without reading the rest of it; None when it cannot be read."""
+    if not blob or not blob.strip("0"):
         return None
-    proc = subprocess.Popen(["git", "-C", str(root), "cat-file", "blob", f"{commit}:{path}"],
+    proc = subprocess.Popen(["git", "-C", str(root), "cat-file", "blob", blob],
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     assert proc.stdout is not None
     first = proc.stdout.readline(1_000_000)
@@ -153,6 +152,7 @@ def _seal(findings: list[Finding], folded: dict[str, set[str]]) -> None:
     """A column's fingerprint covers the personal values it holds: accepting it (`ignore`, `baseline`) accepts
     those, and any new value reports the column again. Removing values also changes it (take the baseline again)."""
     for f in findings:
+        f.extra.pop("_bare", None)
         cells = f.extra.pop("_cells", set())
         if f.rule == "pii_column":
             cells |= folded.get(f.path, set())
@@ -191,6 +191,10 @@ class Scanner:
                 res.partial.add(rel)
                 res.notes.append(f"{rel}: larger than max_file_bytes ({self.config.max_file_bytes}); only its first "
                                  "part was scanned")
+            elif text is not None and len(text) > CSV_MAX_CHARS and rel.lower().endswith((".csv", ".tsv")):
+                res.partial.add(rel)
+                res.notes.append(f"{rel}: only its first {CSV_MAX_CHARS} characters were checked for personal "
+                                 "columns")
             if text is None:                              # binary: only its name can be checked
                 res.findings.extend(to_finding(hit, rel, 0) for hit in scan_file_level(rel, ""))
                 continue
@@ -222,7 +226,7 @@ class Scanner:
         # Scanning a subdirectory of a repository: only its history, with paths relative to it.
         prefix = _git(self.root, "rev-parse", "--show-prefix").stdout.strip()
         args = ["log", "--all", "-p", "--no-color", "--no-ext-diff", "--unified=0", "--no-renames", "--reverse",
-                "--format=%x01commit %H"]
+                "--full-index", "--format=%x01commit %H"]
         if max_commits:
             args.insert(1, f"--max-count={max_commits}")
         args += ["--", "."]
@@ -233,22 +237,31 @@ class Scanner:
         commit, path, lineno = None, None, 0
         first: dict[str, Finding] = {}
         added: list[str] = []          # lines added to `path` in `commit`: file-level rules (CSV columns, key blocks)
-        header_added = False           # line 1 of `path` is among them
+        blobs: tuple[str, str] = ("", "")   # `path` before and after `commit` (git object ids)
+        header_added = False           # the new line 1 of `path` is the first of `added`
+        header_lost = False            # the old line 1 was removed and nothing replaced it
+        headers: dict[str, str] = {}   # header line of each table version seen: rows-only commits keep the old one
 
         def flush() -> None:
-            nonlocal header_added
+            nonlocal header_added, header_lost
+            lines = added
+            if path and not self._allowed_path(path) and path.lower().endswith((".csv", ".tsv")):
+                # A value found only through its column (a bare ID under `cedula`) needs the header, which a commit
+                # that only adds rows does not show: take it from the previous version, or read it from git.
+                header = added[0] if header_added and added else (None if header_lost else headers.get(blobs[0]))
+                if header is None and added:
+                    header = _first_line(self.root, blobs[1])
+                if header is not None and blobs[1]:
+                    headers[blobs[1]] = header
+                if header is not None and not header_added:
+                    lines = [header, *added]
             if path and added and not self._allowed_path(path):
-                lines = added
-                if not header_added and path.lower().endswith((".csv", ".tsv")):
-                    # Rows added without the header line: read the header at that commit, so that a value found
-                    # only through its column (a bare ID under `cedula`) is still checked.
-                    header = _first_line(self.root, commit, prefix + path)
-                    lines = [header, *added] if header is not None else added
-                for hit in scan_file_level(path, "\n".join(lines) + "\n", self._email_domains):
+                for hit in scan_file_level(path, "\n".join(lines) + "\n", self._email_domains, strict_rows=True,
+                                           allowed=self._allowed_value):
                     if hit.category != "sensitive_file" and not self._allowed_value(hit.value):
                         self._remember(first, to_finding(hit, path, 0), commit)
             added.clear()
-            header_added = False
+            header_added = header_lost = False
 
         assert proc.stdout is not None
         for raw in proc.stdout:
@@ -260,7 +273,11 @@ class Scanner:
                 continue
             if line.startswith("diff --git "):
                 flush()
-                path = None
+                path, blobs = None, ("", "")
+                continue
+            if line.startswith("index ") and ".." in line:
+                old, new = line[6:].split(" ", 1)[0].split("..", 1)
+                blobs = (old, new)
                 continue
             if line.startswith("+++ "):
                 target = _diff_path(line[4:])
@@ -272,9 +289,14 @@ class Scanner:
                         self._remember(first, to_finding(hit, path, 0), commit)
                 continue
             if line.startswith("@@"):
-                m = re.search(r"\+(\d+)(?:,(\d+))?", line)
-                lineno = int(m.group(1)) if m else 0
-                header_added = header_added or (lineno == 1 and (m.group(2) or "1") != "0")
+                m = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+                if not m:
+                    lineno = 0
+                    continue
+                lineno = int(m.group(3))
+                new_first = lineno == 1 and m.group(4) != "0"
+                header_added = header_added or new_first
+                header_lost = header_lost or (m.group(1) == "1" and m.group(2) != "0" and not new_first)
                 continue
             if path and line.startswith("+") and not line.startswith("+++"):
                 if not self._allowed_path(path):
@@ -298,7 +320,7 @@ class Scanner:
             f.extra["_commits"] = set()
             seen[key] = f
         elif f.rule == "pii_column":                         # the table again in a later commit: all its values
-            for k in ("_cells", "_covers"):
+            for k in ("_cells", "_covers", "_bare"):
                 seen[key].extra.setdefault(k, set()).update(f.extra.get(k, set()))
         seen[key].extra["_commits"].add(commit)
         seen[key].commits = len(seen[key].extra["_commits"])
@@ -343,14 +365,14 @@ def full_scan(root: Path, config: Config, history: bool = False, include_untrack
             elif f.path not in res.partial and f.value_sha256 not in res.covers[f.path] and f.key not in in_tree:
                 gone.setdefault(f.path, set()).add(f.value_sha256)   # once in the table, no longer: history only
         # Values found only through their column (a bare ID under `cedula`) have no line finding of their own:
-        # compare the cells each column held in history with the cells the current table holds.
+        # compare those cells, as each column held them in history, with the cells the current table holds.
         cells_now: dict[str, set[str]] = {}
         for f in res.findings:
             if f.rule == "pii_column" and f.in_working_tree:
                 cells_now.setdefault(f.path, set()).update(f.extra.get("_cells", set()))
         for f in hist.findings:
             if f.rule == "pii_column" and f.key in in_tree and f.path not in res.partial:
-                removed = f.extra.get("_cells", set()) - cells_now[f.path]
+                removed = f.extra.get("_bare", set()) - cells_now[f.path]
                 if removed:
                     gone.setdefault(f.path, set()).update(removed)
         res.findings += [_history_rows(path, values) for path, values in sorted(gone.items())]
