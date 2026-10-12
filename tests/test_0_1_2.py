@@ -118,10 +118,7 @@ def test_a_csv_longer_than_the_column_parse_limit_is_not_compared(tmp_path, monk
 
 
 def test_a_commit_that_removes_the_header_line_makes_the_next_header_come_from_git(tmp_path, monkeypatch):
-    import prepublish_guard.scanner as scanner
-    calls = []
-    real = scanner._first_line
-    monkeypatch.setattr(scanner, "_first_line", lambda *a: calls.append(a) or real(*a))
+    calls = _count_git_reads(monkeypatch)
     repo = new_repo(tmp_path, {"people.csv": TABLE})
     (repo / "people.csv").write_text(TABLE.split("\n", 1)[1] + EXTRA)   # header line gone, one row added
     _commit(repo, "header removed")
@@ -164,11 +161,17 @@ def test_a_commit_that_deletes_the_first_row_and_appends_one_still_reads_the_hea
     assert _history_rows_previews(repo) == ["2 value(s)"]
 
 
-def test_rows_only_commits_take_the_header_from_the_diff_without_a_git_call_each(tmp_path, monkeypatch):
+def _count_git_reads(monkeypatch):
     import prepublish_guard.scanner as scanner
     calls = []
-    real = scanner._first_line
-    monkeypatch.setattr(scanner, "_first_line", lambda *a: calls.append(a) or real(*a))
+    for name in ("_first_line", "_blob_text"):
+        real = getattr(scanner, name)
+        monkeypatch.setattr(scanner, name, lambda *a, _real=real: calls.append(a) or _real(*a))
+    return calls
+
+
+def test_rows_only_commits_take_the_header_from_the_diff_without_a_git_call_each(tmp_path, monkeypatch):
+    calls = _count_git_reads(monkeypatch)
     repo = new_repo(tmp_path, {"people.csv": TABLE})
     text = TABLE
     for i in range(20):
@@ -272,3 +275,25 @@ def test_a_partly_changed_header_line_is_not_read_as_a_row(tmp_path):
     (repo / "people.csv").write_text(edited)
     _commit(repo, "row removed")
     assert main(["scan", str(repo), "--history"]) == 1
+
+
+# Third Codex review (b722109).
+
+def test_rows_already_in_a_table_count_once_its_header_becomes_personal(tmp_path):
+    before = "nombre,codigo\nAna,10" + "23456781\nLuis,79" + "845123\n"
+    repo = new_repo(tmp_path, {"people.csv": before})
+    (repo / "people.csv").write_text(before.replace("codigo", "cedula"))   # only the header line changes
+    _commit(repo, "the column is a cedula")
+    (repo / "people.csv").write_text("nombre,cedula\nAna,10" + "23456781\n")
+    _commit(repo, "Luis removed")
+    assert _history_rows_previews(repo) == ["1 value(s)"]
+
+
+def test_a_whole_table_version_keeps_rows_with_fewer_fields(tmp_path):
+    before = "nombre,codigo,notas\nAna,10" + "23456781,x\nLuis,79" + "845123\n"   # Luis has no `notas` field
+    repo = new_repo(tmp_path, {"people.csv": before})
+    (repo / "people.csv").write_text(before.replace("codigo", "cedula"))
+    _commit(repo, "the column is a cedula")
+    (repo / "people.csv").write_text("nombre,cedula,notas\nAna,10" + "23456781,x\n")
+    _commit(repo, "Luis removed")
+    assert _history_rows_previews(repo) == ["1 value(s)"]

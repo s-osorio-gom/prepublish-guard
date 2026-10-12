@@ -82,6 +82,20 @@ def _first_record(lines: Iterable[str]) -> str | None:
     return None
 
 
+def _blob_text(root: Path, blob: str, limit: int) -> str | None:
+    """A stored file version, up to `limit` bytes; None when it cannot be read."""
+    if not blob or not blob.strip("0"):
+        return None
+    proc = subprocess.Popen(["git", "-C", str(root), "cat-file", "blob", blob],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    assert proc.stdout is not None
+    data = proc.stdout.read(limit)
+    proc.stdout.close()
+    proc.kill()
+    proc.wait()
+    return data.decode("utf-8", errors="replace") if data else None
+
+
 def _first_line(root: Path, blob: str) -> str | None:
     """The header record of a stored file version, without reading the rest of it; None when it cannot be read."""
     if not blob or not blob.strip("0"):
@@ -254,34 +268,39 @@ class Scanner:
         added: list[str] = []          # lines added to `path` in `commit`: file-level rules (CSV columns, key blocks)
         blobs: tuple[str, str] = ("", "")   # `path` before and after `commit` (git object ids)
         header_touched = False         # a hunk changed a line of the header record
-        first_hunk = 0                 # lines the hunk starting at new line 1 adds (0: none starts there)
         headers: dict[str, str] = {}   # header record of each table version seen: rows-only commits keep the old one
 
         def flush() -> None:
-            nonlocal header_touched, first_hunk, blobs
-            lines = added
+            nonlocal header_touched, blobs
+            lines, whole = added, False
             if path and not self._allowed_path(path) and path.lower().endswith((".csv", ".tsv")):
-                # A value found only through its column (a bare ID under `cedula`) needs the header, which a commit
-                # that only adds rows does not show: keep the previous version's, take a new one whole from the
-                # diff, or read it from git.
-                in_diff = _first_record(added[:first_hunk]) if header_touched and first_hunk else None
-                header = in_diff or (None if header_touched else headers.get(blobs[0]))
-                if header is None and added:
-                    header = _first_line(self.root, blobs[1])
+                # A value found only through its column (a bare ID under `cedula`) needs the header. A commit that
+                # only adds rows keeps the previous version's. A new file is all in the diff. When the header of an
+                # existing table changes, rows the commit did not touch may now sit under a personal column: read
+                # that whole version (header changes are rare).
+                if header_touched and blobs[0].strip("0"):
+                    text = _blob_text(self.root, blobs[1], self.config.max_file_bytes)
+                    lines, whole = (text.splitlines(), True) if text is not None else ([], False)
+                    header = _first_record(lines)
+                elif header_touched:
+                    header, whole = _first_record(added), True
+                else:
+                    header = headers.get(blobs[0])
+                    if header is None and added:
+                        header = _first_line(self.root, blobs[1])
+                    if header is not None:
+                        lines = [header, *added]
                 if header is not None and blobs[1]:
                     headers[blobs[1]] = header
-                if header is not None and not in_diff:
-                    # Lines of a partly changed header record are not rows.
-                    skip = min(header.count("\n") + 1, first_hunk) if header_touched else 0
-                    lines = [header, *added[skip:]]
-            if path and added and not self._allowed_path(path):
-                for hit in scan_file_level(path, "\n".join(lines) + "\n", self._email_domains, strict_rows=True,
+            if path and lines and not self._allowed_path(path):
+                # A whole version parses exactly; rows from hunks may start inside a quoted cell (strict_rows).
+                for hit in scan_file_level(path, "\n".join(lines) + "\n", self._email_domains, strict_rows=not whole,
                                            allowed=self._allowed_value):
                     if hit.category != "sensitive_file" and not self._allowed_value(hit.value):
                         self._remember(first, to_finding(hit, path, 0), commit)
             added.clear()
             # flush() runs again at the next diff or commit: it must not re-derive this version's header.
-            header_touched, first_hunk, blobs = False, 0, ("", "")
+            header_touched, blobs = False, ("", "")
 
         assert proc.stdout is not None
         for raw in proc.stdout:
@@ -318,8 +337,6 @@ class Scanner:
                 span = (headers.get(blobs[0]) or "").count("\n") + 1      # lines of the old header record
                 header_touched = header_touched or (1 <= old_start <= span and old_count > 0) or (
                     1 <= lineno <= span and new_count > 0)
-                if lineno == 1 and new_count > 0:
-                    first_hunk = new_count
                 continue
             if path and line.startswith("+") and not line.startswith("+++"):
                 if not self._allowed_path(path):

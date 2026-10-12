@@ -13,8 +13,10 @@
   Each case has a test in `tests/test_0_1_2.py`.
 - **How it reads the header.** A commit that only adds rows keeps the header of the table's previous version. The
   header comes from the diff itself (`--full-index`), as the first complete CSV record, so a quoted name may hold a
-  line break. Git is asked for it only when that version was not seen (for example with `--max-commits`) or when the
-  commit changed the header only in part.
+  line break. Git is asked for it only when that version was not seen, for example with `--max-commits`.
+
+  When a commit changes the header of an existing table, git returns that whole version (header changes are rare). That
+  way, rows the commit did not touch also count once their column becomes personal.
 - **Which rows are read.** History rows whose shape does not match the header are skipped, such as a change that
   starts inside a quoted multi-line cell.
 - **Which cells are compared.** Only cells that no per-line rule reports, leaving out hits `allow_regex` accepts. So a
